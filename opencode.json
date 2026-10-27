@@ -4,7 +4,7 @@
       "type": "local",
       "command": [
         "node",
-        "/home/argo/Code/xr/dtp-shoot/dtp-shoot/node_modules/@iwsdk/cli/dist/cli.js",
+        "/home/argo/Code/xr/dtp-shoot/node_modules/@iwsdk/cli/dist/cli.js",
         "mcp",
         "stdio"
       ],
@@ -14,7 +14,7 @@
       "type": "local",
       "command": [
         "node",
-        "/home/argo/Code/xr/dtp-shoot/dtp-shoot/node_modules/@iwsdk/reference/dist/cli.js"
+        "/home/argo/Code/xr/dtp-shoot/node_modules/@iwsdk/reference/dist/cli.js"
       ],
       "enabled": true
     },
@@ -22,7 +22,7 @@
       "type": "local",
       "command": [
         "node",
-        "/home/argo/Code/xr/dtp-shoot/dtp-shoot/node_modules/@meta-quest/metavr/bin.js",
+        "/home/argo/Code/xr/dtp-shoot/node_modules/@meta-quest/metavr/bin.js",
         "mcp",
         "server"
       ],
@@ -30,12 +30,12 @@
     }
   },
   "permission": {
-    "iwsdk-runtime_*": "allow",
-    "iwsdk-reference_*": "allow",
-    "metavr_*": "allow",
     "skill": {
       "iwsdk-*": "allow"
-    }
+    },
+    "iwsdk-runtime_*": "allow",
+    "iwsdk-reference_*": "allow",
+    "metavr_*": "allow"
   },
   "$schema": "https://opencode.ai/config.json"
 }
