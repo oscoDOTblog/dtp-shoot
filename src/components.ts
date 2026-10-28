@@ -6,6 +6,6 @@
  */
 
 import { defineComponents } from '@iwsdk/core';
-import { Gun, RangeGame, Target } from './range-components.js';
+import { Gun, Magazine, RangeGame, Target } from './range-components.js';
 
-export default defineComponents([Target, Gun, RangeGame]);
+export default defineComponents([Target, Gun, Magazine, RangeGame]);

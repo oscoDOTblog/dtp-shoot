@@ -35,6 +35,17 @@ export const Gun = createComponent('Gun', {
   recoil: { type: Types.Float32, default: 0 },
   flashTime: { type: Types.Float32, default: 0 },
   tracerTime: { type: Types.Float32, default: 0 },
+  ammo: { type: Types.Int32, default: 6, min: 0, step: 1 },
+  magazineSize: { type: Types.Int32, default: 6, min: 1, step: 1 },
+  magIn: { type: Types.Boolean, default: true, label: 'Magazine seated' },
+  needsRack: { type: Types.Boolean, default: false, label: 'Slide locked back' },
+});
+
+/** A spare magazine resting on the bench. */
+export const Magazine = createComponent('Magazine', {
+  rounds: { type: Types.Int32, default: 6, min: 0, step: 1 },
+  ready: { type: Types.Boolean, default: true },
+  respawn: { type: Types.Float32, default: 0, label: 'Respawn timer' },
 });
 
 /** Singleton round state, rendered by the range HUD. */

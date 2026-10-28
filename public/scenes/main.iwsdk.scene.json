@@ -70,6 +70,14 @@
           "hitPulse": 0,
           "restartRequested": false,
           "status": "Grab the pistol and pull the trigger"
+        },
+        "AudioSource": {
+          "src": "pistol-dry",
+          "volume": 0.38,
+          "loop": false,
+          "autoplay": false,
+          "positional": false,
+          "maxInstances": 3
         }
       }
     },
@@ -131,7 +139,11 @@
           "fireInterval": 0.16,
           "recoil": 0,
           "flashTime": 0,
-          "tracerTime": 0
+          "tracerTime": 0,
+          "ammo": 6,
+          "magazineSize": 6,
+          "magIn": true,
+          "needsRack": false
         },
         "AudioSource": {
           "src": "pistol-shot",
@@ -143,6 +155,70 @@
           "maxDistance": 20,
           "maxInstances": 4
         }
+      }
+    },
+    {
+      "id": "magazine-1",
+      "name": "Spare Magazine 1",
+      "content": { "type": "asset", "asset": "magazine", "castShadow": true },
+      "transform": {
+        "position": [-0.38, 0.932, -0.88],
+        "rotationDeg": [0, 18, 0]
+      },
+      "components": {
+        "OneHandGrabbable": {
+          "rotate": true,
+          "translate": true
+        },
+        "Magazine": { "rounds": 6, "ready": true, "respawn": 0 },
+        "ContactShadow": {
+          "size": [0.07, 0.07],
+          "height": 0.002
+        }
+      }
+    },
+    {
+      "id": "magazine-2",
+      "name": "Spare Magazine 2",
+      "content": { "type": "asset", "asset": "magazine", "castShadow": true },
+      "transform": {
+        "position": [-0.5, 0.932, -0.99],
+        "rotationDeg": [0, -24, 0]
+      },
+      "components": {
+        "OneHandGrabbable": {
+          "rotate": true,
+          "translate": true
+        },
+        "Magazine": { "rounds": 6, "ready": true, "respawn": 0 },
+        "ContactShadow": {
+          "size": [0.07, 0.07],
+          "height": 0.002
+        }
+      }
+    },
+    {
+      "id": "gun-mech",
+      "name": "Gun Mechanism",
+      "components": {
+        "AudioSource": {
+          "src": "pistol-rack",
+          "volume": 0.45,
+          "loop": false,
+          "autoplay": false,
+          "positional": false,
+          "maxInstances": 2
+        }
+      }
+    },
+    {
+      "id": "ammo-panel",
+      "name": "Ammo Readout",
+      "content": { "type": "asset", "asset": "ammo-readout" },
+      "transform": {
+        "position": [-0.16, 0.99, -1.0],
+        "rotationDeg": [-30, 0, 0],
+        "scale": 0.15
       }
     },
     {

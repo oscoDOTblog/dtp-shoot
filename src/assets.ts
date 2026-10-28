@@ -6,6 +6,7 @@
  */
 
 import { AssetType, defineAssets } from '@iwsdk/core';
+import { createMagazine } from './scene-assets/magazine.scene-asset.js';
 import { createPistol } from './scene-assets/pistol.scene-asset.js';
 import { createRangeBench } from './scene-assets/range-bench.scene-asset.js';
 import { createRangeBerm } from './scene-assets/range-berm.scene-asset.js';
@@ -30,9 +31,13 @@ const uikitml = (fileName: string, name: string) => ({
 export default defineAssets({
   'range-floor': createRangeFloor(),
   pistol: createPistol(),
+  magazine: createMagazine(),
   target: createTarget(),
   'range-bench': createRangeBench(),
   'range-berm': createRangeBerm(),
   'range-hud': uikitml('range-hud.uikitml', 'Range HUD'),
+  'ammo-readout': uikitml('ammo-readout.uikitml', 'Ammo Readout'),
   'pistol-shot': audio('audio/pistol-shot.wav', 'background'),
+  'pistol-dry': audio('audio/pistol-dry.wav', 'background'),
+  'pistol-rack': audio('audio/pistol-rack.wav', 'background'),
 });

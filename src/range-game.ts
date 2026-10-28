@@ -17,7 +17,7 @@ import {
   createSystem,
 } from '@iwsdk/core';
 import type { Entity, Object3D } from '@iwsdk/core';
-import { Gun, RangeGame, Target, TargetState } from './range-components.js';
+import { Gun, Magazine, RangeGame, Target, TargetState } from './range-components.js';
 
 const DOWN_ANGLE = -1.45;
 const RISE_RATE = 8.5;
@@ -30,16 +30,35 @@ const MAX_SHOT_DISTANCE = 40;
 const MAX_TRACER_LENGTH = 12;
 /** The pistol's tracer mesh is 3 m long before scaling. */
 const TRACER_UNIT = 3;
+/** Seconds a spent magazine stays away before it reappears on the bench. */
+const MAG_RESPAWN_DELAY = 1.2;
+/** How close a held magazine has to get to the grip well to seat. */
+const MAG_INSERT_RADIUS = 0.18;
+/** Rearward travel of the free hand that counts as racking the slide. */
+const RACK_DISTANCE = 0.026;
+/** How far the slide sits back while it is locked open on an empty mag. */
+const SLIDE_LOCK_BACK = 0.015;
 const DEFAULT_STATUS = 'Grab the pistol and pull the trigger';
+const EMPTY_STATUS = 'Out of ammo. Press A to drop the magazine';
+const NO_MAG_STATUS = 'Magazine out. Grab a spare and press it into the grip';
+const RACK_STATUS = 'Rack the slide to chamber a round';
 const FINISHED_STATUS = 'Round over. Pull the trigger to go again';
 
 type TargetRuntime = { arm: Object3D | null; head: Object3D | null };
 type GunRuntime = {
   recoil: Object3D | null;
+  slide: Object3D | null;
   muzzle: Object3D | null;
   flash: Object3D | null;
   tracer: Object3D | null;
   correction: Quaternion;
+};
+type RackRuntime = { tracking: boolean; startZ: number; pull: number };
+type MagRuntime = {
+  home: Vector3;
+  homeQuaternion: Quaternion;
+  rounds: Object3D | null;
+  captured: boolean;
 };
 
 export class RangeGameSystem extends createSystem({
@@ -47,9 +66,12 @@ export class RangeGameSystem extends createSystem({
   targets: { required: [Target] },
   guns: { required: [Gun] },
   heldGuns: { required: [Gun, Grabbed] },
+  magazines: { required: [Magazine] },
+  heldMagazines: { required: [Magazine, Grabbed] },
 }) {
   private readonly targetRuntime = new Map<number, TargetRuntime>();
   private readonly gunRuntime = new Map<number, GunRuntime>();
+  private readonly magRuntime = new Map<number, MagRuntime>();
   private readonly raycaster = new Raycaster();
   private readonly shotOrigin = new Vector3();
   private readonly shotDirection = new Vector3();
@@ -59,9 +81,15 @@ export class RangeGameSystem extends createSystem({
   private readonly tracerMid = new Vector3();
   private readonly tracerParentQuaternion = new Quaternion();
   private readonly recoilTilt = new Quaternion();
+  private readonly insertPoint = new Vector3();
+  private readonly magPosition = new Vector3();
+  private readonly handWorld = new Vector3();
+  private readonly handLocal = new Vector3();
+  private readonly rackRuntime = new Map<number, RackRuntime>();
   private readonly xAxis = new Vector3(1, 0, 0);
   private readonly candidates: Object3D[] = [];
   private audioContext: AudioContext | null = null;
+  private gunMech: Entity | null = null;
   private spawnTimer = 0;
 
   init(): void {
@@ -87,7 +115,9 @@ export class RangeGameSystem extends createSystem({
 
     this.updateRound(game, delta);
     this.handleShooting(game);
+    this.handleEject(game);
     this.updateTargets(game, delta);
+    this.updateReload(game, delta);
     this.updateGunFeedback(delta);
   }
 
@@ -109,6 +139,8 @@ export class RangeGameSystem extends createSystem({
     game.setValue(RangeGame, 'lastHitPoints', 0);
     game.setValue(RangeGame, 'status', DEFAULT_STATUS);
     this.spawnTimer = 0;
+    this.refillGuns();
+    this.restoreMagazines();
     for (const target of this.queries.targets.entities) {
       target.setValue(Target, 'state', TargetState.Down);
       target.setValue(Target, 'timer', 0);
@@ -137,19 +169,42 @@ export class RangeGameSystem extends createSystem({
     if (pulse <= 0) {
       if ((game.getValue(RangeGame, 'hitPulse') ?? 0) > 0) {
         game.setValue(RangeGame, 'hitPulse', 0);
-        game.setValue(
-          RangeGame,
-          'status',
-          game.getValue(RangeGame, 'finished') === true
-            ? FINISHED_STATUS
-            : game.getValue(RangeGame, 'running') === true
-              ? 'Live. Keep shooting'
-              : DEFAULT_STATUS,
-        );
+        game.setValue(RangeGame, 'status', this.idleStatus(game));
       }
     } else {
       game.setValue(RangeGame, 'hitPulse', pulse);
     }
+  }
+
+  /** The status to fall back to once a hit or reload message times out. */
+  private idleStatus(game: Entity): string {
+    if (game.getValue(RangeGame, 'finished') === true) {
+      return FINISHED_STATUS;
+    }
+    const issue = this.gunIssue(this.firstGun());
+    if (issue != null) {
+      return issue;
+    }
+    return game.getValue(RangeGame, 'running') === true
+      ? 'Live. Keep shooting'
+      : DEFAULT_STATUS;
+  }
+
+  /** What stops this pistol from firing, if anything. */
+  private gunIssue(gun: Entity | null): string | null {
+    if (gun == null) {
+      return null;
+    }
+    if (gun.getValue(Gun, 'magIn') === false) {
+      return NO_MAG_STATUS;
+    }
+    if ((gun.getValue(Gun, 'ammo') ?? 0) <= 0) {
+      return EMPTY_STATUS;
+    }
+    if (gun.getValue(Gun, 'needsRack') === true) {
+      return RACK_STATUS;
+    }
+    return null;
   }
 
   private startRound(game: Entity): void {
@@ -201,6 +256,14 @@ export class RangeGameSystem extends createSystem({
   private fireFromGun(game: Entity, gun: Entity): void {
     if (game.getValue(RangeGame, 'finished') === true) {
       this.resetRound(game);
+      return;
+    }
+    if (
+      gun.getValue(Gun, 'needsRack') === true ||
+      gun.getValue(Gun, 'magIn') === false ||
+      (gun.getValue(Gun, 'ammo') ?? 0) <= 0
+    ) {
+      this.dryFire(game, gun);
       return;
     }
     if (game.getValue(RangeGame, 'running') !== true) {
@@ -256,6 +319,12 @@ export class RangeGameSystem extends createSystem({
       gun.setValue(Gun, 'recoil', 1);
       gun.setValue(Gun, 'flashTime', 0.055);
       gun.setValue(Gun, 'tracerTime', 0.035);
+      const ammo = Math.max(0, (gun.getValue(Gun, 'ammo') ?? 1) - 1);
+      gun.setValue(Gun, 'ammo', ammo);
+      if (ammo <= 0) {
+        // The last round leaves the slide locked back until it is racked.
+        gun.setValue(Gun, 'needsRack', true);
+      }
       if (runtime.flash != null) {
         runtime.flash.visible = true;
       }
@@ -292,6 +361,13 @@ export class RangeGameSystem extends createSystem({
     }
 
     if (hitEntity == null) {
+      // Running the magazine dry turns the HUD status into the next step.
+      if (gun != null) {
+        const issue = this.gunIssue(gun);
+        if (issue != null) {
+          game.setValue(RangeGame, 'status', issue);
+        }
+      }
       return;
     }
 
@@ -343,6 +419,298 @@ export class RangeGameSystem extends createSystem({
       () => document.removeEventListener('pointerdown', resume),
       () => window.removeEventListener('keydown', resume),
     );
+  }
+
+  /** A trigger pull that cannot fire still clicks. */
+  private dryFire(game: Entity, gun: Entity): void {
+    gun.setValue(Gun, 'cooldown', 0.35);
+    game.setValue(RangeGame, 'status', this.gunIssue(gun) ?? EMPTY_STATUS);
+    this.playDry(game);
+  }
+
+  /** The pistol's click doubles as dry-fire and magazine-seat feedback. */
+  private playDry(game: Entity): void {
+    this.resumeAudio();
+    game.setValue(AudioSource, '_playRequested', true);
+  }
+
+  private firstGun(): Entity | null {
+    for (const gun of this.queries.guns.entities) {
+      return gun;
+    }
+    return null;
+  }
+
+  /**
+   * A on the right controller drops the seated magazine, Metro-style. Any
+   * rounds still in it are lost, and the grip is empty until a spare is pushed
+   * in. The slide state is untouched: only firing dry locks it back.
+   */
+  private handleEject(game: Entity): void {
+    const eject =
+      this.input.xr.gamepads.right?.getButtonDown(InputComponent.A_Button) ===
+      true;
+    if (!eject) {
+      return;
+    }
+    const gun = this.firstHeldGun() ?? this.firstGun();
+    if (gun == null || gun.getValue(Gun, 'magIn') === false) {
+      return;
+    }
+    gun.setValue(Gun, 'magIn', false);
+    gun.setValue(Gun, 'ammo', 0);
+    this.playDry(game);
+    game.setValue(RangeGame, 'status', NO_MAG_STATUS);
+  }
+
+  /**
+   * Entering the slide with the free hand and pulling it rearward chambers a
+   * round when the slide is locked back. Cosmetic when the gun is already
+   * chambered, so nothing is racked twice by accident.
+   */
+  private updateRack(game: Entity, gun: Entity, delta: number): void {
+    const gunObject = gun.object3D;
+    if (gunObject == null) {
+      return;
+    }
+    const runtime = this.gunState(gun, gunObject);
+    const slide = runtime.slide;
+    if (slide == null) {
+      return;
+    }
+    // The visible pistol is the recoil group corrected onto the hand ray, so
+    // measure the free hand there rather than in the grabbed root's frame.
+    const frame = runtime.recoil ?? gunObject;
+
+    let state = this.rackRuntime.get(gun.index);
+    if (state == null) {
+      state = { tracking: false, startZ: 0, pull: 0 };
+      this.rackRuntime.set(gun.index, state);
+    }
+
+    const rackable =
+      gun.getValue(Gun, 'needsRack') === true &&
+      gun.getValue(Gun, 'magIn') !== false &&
+      (gun.getValue(Gun, 'ammo') ?? 0) > 0;
+    const holder =
+      this.world.getSystem(GrabSystem)?.getHolderHand(gun) ?? null;
+
+    if (rackable && holder != null) {
+      const hand =
+        holder === 'left'
+          ? this.player.gripSpaces.right
+          : this.player.gripSpaces.left;
+      gunObject.updateWorldMatrix(true, false);
+      frame.updateWorldMatrix(true, false);
+      hand.getWorldPosition(this.handWorld);
+      this.handLocal.copy(frame.worldToLocal(this.handWorld));
+      const onSlide =
+        this.handLocal.y > -0.02 &&
+        this.handLocal.y < 0.12 &&
+        Math.abs(this.handLocal.x) < 0.12 &&
+        this.handLocal.z > -0.21 &&
+        this.handLocal.z < 0.12;
+      if (onSlide) {
+        if (!state.tracking) {
+          state.tracking = true;
+          state.startZ = this.handLocal.z;
+        }
+        state.pull = Math.max(0, this.handLocal.z - state.startZ);
+        if (state.pull >= RACK_DISTANCE) {
+          state.tracking = false;
+          state.pull = 0;
+          this.completeRack(game, gun);
+        }
+      } else {
+        state.tracking = false;
+      }
+    } else {
+      state.tracking = false;
+    }
+
+    const locked = gun.getValue(Gun, 'needsRack') === true;
+    const reach = locked
+      ? SLIDE_LOCK_BACK + Math.min(state.pull, RACK_DISTANCE)
+      : 0;
+    slide.position.z += (reach - slide.position.z) * Math.min(1, delta * 20);
+  }
+
+  private completeRack(game: Entity, gun: Entity): void {
+    gun.setValue(Gun, 'needsRack', false);
+    this.playRack();
+    game.setValue(RangeGame, 'status', 'Slide racked. Keep shooting');
+    game.setValue(RangeGame, 'hitPulse', 0.9);
+  }
+
+  private playRack(): void {
+    this.resumeAudio();
+    if (this.gunMech == null) {
+      this.gunMech = this.world.getSceneEntity('gun-mech') ?? null;
+    }
+    this.gunMech?.setValue(AudioSource, '_playRequested', true);
+  }
+
+  /**
+   * Ticks spent magazines back onto the bench and seats a held one once it
+   * reaches the pistol's grip well. Runs after shooting, so a magazine grabbed
+   * the instant the gun runs dry still seats on that frame.
+   */
+  private updateReload(game: Entity, delta: number): void {
+    for (const magazine of this.queries.magazines.entities) {
+      if (magazine.getValue(Magazine, 'ready') !== false) {
+        continue;
+      }
+      const timer = (magazine.getValue(Magazine, 'respawn') ?? 0) - delta;
+      if (timer <= 0) {
+        this.restoreMagazine(magazine);
+      } else {
+        magazine.setValue(Magazine, 'respawn', timer);
+      }
+    }
+
+    const gun = this.firstGun();
+    if (gun == null) {
+      return;
+    }
+    this.updateRack(game, gun, delta);
+
+    const magazine = this.heldMagazine();
+    if (magazine == null) {
+      return;
+    }
+    // A seated magazine has to come out (A) before a spare can go in.
+    if (gun.getValue(Gun, 'magIn') !== false) {
+      return;
+    }
+    if (!this.magazineAtGrip(gun, magazine)) {
+      return;
+    }
+    this.seatMagazine(game, gun, magazine);
+  }
+
+  private heldMagazine(): Entity | null {
+    for (const magazine of this.queries.heldMagazines.entities) {
+      if (magazine.getValue(Magazine, 'ready') !== false) {
+        return magazine;
+      }
+    }
+    return null;
+  }
+
+  /** True while the held magazine is inside the pistol's grip well. */
+  private magazineAtGrip(gun: Entity, magazine: Entity): boolean {
+    const gunObject = gun.object3D;
+    const magObject = magazine.object3D;
+    if (gunObject == null || magObject == null) {
+      return false;
+    }
+    gunObject.updateWorldMatrix(true, false);
+    this.insertPoint.set(0, -0.06, 0);
+    gunObject.localToWorld(this.insertPoint);
+    magObject.updateWorldMatrix(true, false);
+    magObject.getWorldPosition(this.magPosition);
+    return (
+      this.insertPoint.distanceToSquared(this.magPosition) <=
+      MAG_INSERT_RADIUS * MAG_INSERT_RADIUS
+    );
+  }
+
+  private seatMagazine(game: Entity, gun: Entity, magazine: Entity): void {
+    const size = gun.getValue(Gun, 'magazineSize') ?? 6;
+    const rounds = Math.min(size, magazine.getValue(Magazine, 'rounds') ?? size);
+    gun.setValue(Gun, 'ammo', rounds);
+    gun.setValue(Gun, 'magIn', true);
+    gun.setValue(
+      Gun,
+      'cooldown',
+      Math.max(gun.getValue(Gun, 'cooldown') ?? 0, 0.2),
+    );
+
+    magazine.setValue(Magazine, 'ready', false);
+    magazine.setValue(Magazine, 'respawn', MAG_RESPAWN_DELAY);
+    const state = this.magState(magazine);
+    if (state.rounds != null) {
+      state.rounds.visible = false;
+    }
+    // Hiding beats leaving a spent magazine floating where the hand let go.
+    this.world.getSystem(GrabSystem)?.forceRelease(magazine);
+    if (magazine.object3D != null) {
+      magazine.object3D.visible = false;
+    }
+
+    this.playDry(game);
+    game.setValue(
+      RangeGame,
+      'status',
+      gun.getValue(Gun, 'needsRack') === true
+        ? 'Magazine in. Pull the slide back to chamber a round'
+        : `Magazine in. ${rounds} rounds`,
+    );
+    game.setValue(RangeGame, 'hitPulse', 0.9);
+  }
+
+  private restoreMagazine(magazine: Entity): void {
+    const state = this.magState(magazine);
+    magazine.setValue(Magazine, 'ready', true);
+    magazine.setValue(Magazine, 'respawn', 0);
+    if (state.rounds != null) {
+      state.rounds.visible = true;
+    }
+
+    const object = magazine.object3D;
+    if (object == null) {
+      return;
+    }
+    object.visible = true;
+    // A magazine still in hand keeps its pose; the rest go back on the bench.
+    if (this.world.getSystem(GrabSystem)?.getHolderHand(magazine) != null) {
+      return;
+    }
+    if (!state.captured) {
+      return;
+    }
+    object.position.copy(state.home);
+    object.quaternion.copy(state.homeQuaternion);
+  }
+
+  private restoreMagazines(): void {
+    for (const magazine of this.queries.magazines.entities) {
+      this.restoreMagazine(magazine);
+    }
+  }
+
+  private refillGuns(): void {
+    for (const gun of this.queries.guns.entities) {
+      gun.setValue(Gun, 'ammo', gun.getValue(Gun, 'magazineSize') ?? 6);
+      gun.setValue(Gun, 'magIn', true);
+      gun.setValue(Gun, 'needsRack', false);
+      const runtime = this.rackRuntime.get(gun.index);
+      if (runtime != null) {
+        runtime.tracking = false;
+        runtime.pull = 0;
+      }
+    }
+  }
+
+  private magState(magazine: Entity): MagRuntime {
+    let runtime = this.magRuntime.get(magazine.index);
+    if (runtime == null) {
+      runtime = {
+        home: new Vector3(),
+        homeQuaternion: new Quaternion(),
+        rounds: null,
+        captured: false,
+      };
+      this.magRuntime.set(magazine.index, runtime);
+    }
+    const object = magazine.object3D;
+    if (!runtime.captured && object != null) {
+      runtime.home.copy(object.position);
+      runtime.homeQuaternion.copy(object.quaternion);
+      runtime.rounds = object.getObjectByName('Rounds') ?? null;
+      runtime.captured = true;
+    }
+    return runtime;
   }
 
   /**
@@ -574,6 +942,7 @@ export class RangeGameSystem extends createSystem({
     if (runtime == null) {
       runtime = {
         recoil: null,
+        slide: null,
         muzzle: null,
         flash: null,
         tracer: null,
@@ -582,6 +951,7 @@ export class RangeGameSystem extends createSystem({
       this.gunRuntime.set(gun.index, runtime);
     }
     runtime.recoil = runtime.recoil ?? gunObject.getObjectByName('Recoil') ?? null;
+    runtime.slide = runtime.slide ?? gunObject.getObjectByName('Slide') ?? null;
     runtime.muzzle = runtime.muzzle ?? gunObject.getObjectByName('Muzzle') ?? null;
     runtime.flash = runtime.flash ?? gunObject.getObjectByName('MuzzleFlash') ?? null;
     runtime.tracer = runtime.tracer ?? gunObject.getObjectByName('Tracer') ?? null;

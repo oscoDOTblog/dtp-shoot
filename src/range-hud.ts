@@ -12,22 +12,28 @@ import {
   createSystem,
 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
-import { RangeGame } from './range-components.js';
+import { Gun, RangeGame } from './range-components.js';
 
 const TIME_LOW_COLOR = '#ff8a5a';
 const TIME_COLOR = '#fafaf7';
 const STATUS_DONE_COLOR = '#f5d90a';
 const STATUS_COLOR = '#f2f2ee';
+const AMMO_LOW_LABEL = 'MAG LOW';
 
 export class RangeHudSystem extends createSystem({
   game: { required: [RangeGame] },
+  guns: { required: [Gun] },
 }) {
   private connected = false;
+  private ammoConnected = false;
   private scoreText: UIKit.Text | null = null;
   private timeText: UIKit.Text | null = null;
   private statsText: UIKit.Text | null = null;
   private statusText: UIKit.Text | null = null;
   private playAgain: UIKit.Text | null = null;
+  private ammoValue: UIKit.Text | null = null;
+  private ammoHint: UIKit.Text | null = null;
+  private ammoAlert: UIKit.Text | null = null;
 
   private lastScore = Number.NaN;
   private lastTime = Number.NaN;
@@ -35,15 +41,21 @@ export class RangeHudSystem extends createSystem({
   private lastStatus = '';
   private lastFinished: boolean | null = null;
   private lastLowTime: boolean | null = null;
+  private lastAmmoSignature = '';
 
   update(): void {
     if (!this.connected) {
       this.connect();
     }
+    if (!this.ammoConnected) {
+      this.connectAmmo();
+    }
     const game = this.gameEntity();
     if (game == null) {
       return;
     }
+
+    this.updateAmmo();
 
     if (this.scoreText != null) {
       const score = game.getValue(RangeGame, 'score') ?? 0;
@@ -103,6 +115,71 @@ export class RangeHudSystem extends createSystem({
       return entity;
     }
     return null;
+  }
+
+  private firstGun(): Entity | null {
+    for (const gun of this.queries.guns.entities) {
+      return gun;
+    }
+    return null;
+  }
+
+  /** Mirrors the pistol's magazine and slide state into the bench readout. */
+  private updateAmmo(): void {
+    if (this.ammoValue == null) {
+      return;
+    }
+    const gun = this.firstGun();
+    if (gun == null) {
+      return;
+    }
+    const ammo = gun.getValue(Gun, 'ammo') ?? 0;
+    const size = gun.getValue(Gun, 'magazineSize') ?? 6;
+    const hasMag = gun.getValue(Gun, 'magIn') !== false;
+    const needsRack = gun.getValue(Gun, 'needsRack') === true;
+    const signature = `${ammo}|${size}|${hasMag}|${needsRack}`;
+    if (signature === this.lastAmmoSignature) {
+      return;
+    }
+    this.lastAmmoSignature = signature;
+
+    this.ammoValue.setProperties({ text: `${ammo} / ${size}` });
+
+    const alert = !hasMag
+      ? 'GRAB A SPARE MAG'
+      : ammo <= 0
+        ? 'PRESS A TO DROP MAG'
+        : needsRack
+          ? 'RACK THE SLIDE'
+          : '';
+    this.ammoHint?.setProperties({
+      text: ammo <= 2 ? AMMO_LOW_LABEL : 'READY',
+      display: alert === '' ? 'flex' : 'none',
+    });
+    this.ammoAlert?.setProperties({
+      text: alert,
+      display: alert === '' ? 'none' : 'flex',
+    });
+  }
+
+  private connectAmmo(): void {
+    const panel = this.world.getSceneObject<UIKitMLAsset>('ammo-panel');
+    if (panel == null) {
+      return;
+    }
+    const value = panel.getElementById<UIKit.Text>('ammo-value');
+    const hint = panel.getElementById<UIKit.Text>('ammo-hint');
+    if (value == null) {
+      return;
+    }
+    this.ammoValue = value;
+    this.ammoHint = hint ?? null;
+    this.ammoAlert = panel.getElementById<UIKit.Text>('ammo-alert') ?? null;
+    value.name = 'AmmoValue';
+    if (hint != null) hint.name = 'AmmoHint';
+    if (this.ammoAlert != null) this.ammoAlert.name = 'AmmoAlert';
+    this.lastAmmoSignature = '';
+    this.ammoConnected = true;
   }
 
   private connect(): void {
