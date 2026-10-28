@@ -11,6 +11,8 @@ import { createPistol } from './scene-assets/pistol.scene-asset.js';
 import { createRangeBench } from './scene-assets/range-bench.scene-asset.js';
 import { createRangeBerm } from './scene-assets/range-berm.scene-asset.js';
 import { createRangeFloor } from './scene-assets/range-floor.scene-asset.js';
+import { createSmg } from './scene-assets/smg.scene-asset.js';
+import { createSmgMagazine } from './scene-assets/smg-magazine.scene-asset.js';
 import { createTarget } from './scene-assets/target.scene-asset.js';
 
 const publicAssetUrl = (filePath: string): string =>
@@ -32,6 +34,8 @@ export default defineAssets({
   'range-floor': createRangeFloor(),
   pistol: createPistol(),
   magazine: createMagazine(),
+  smg: createSmg(),
+  'smg-magazine': createSmgMagazine(),
   target: createTarget(),
   'range-bench': createRangeBench(),
   'range-berm': createRangeBerm(),
@@ -42,4 +46,7 @@ export default defineAssets({
   'pistol-rack': audio('audio/pistol-rack.wav', 'background'),
   'pistol-magout': audio('audio/pistol-magout.wav', 'background'),
   'pistol-empty': audio('audio/pistol-empty.wav', 'background'),
+  'smg-shot': audio('audio/smg-shot.wav', 'background'),
+  'smg-magout': audio('audio/smg-magout.wav', 'background'),
+  'smg-rack': audio('audio/smg-rack.wav', 'background'),
 });

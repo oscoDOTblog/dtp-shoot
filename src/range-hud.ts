@@ -15,10 +15,11 @@ import type { Entity } from '@iwsdk/core';
 import {
   AmmoMode,
   Gun,
-  MAGAZINE_MAX,
-  MAGAZINE_MIN,
   RangeGame,
+  WEAPON_MAGAZINE,
+  WeaponKind,
 } from './range-components.js';
+import type { WeaponKindValue } from './range-components.js';
 
 const TIME_LOW_COLOR = '#ff8a5a';
 const TIME_COLOR = '#fafaf7';
@@ -26,6 +27,9 @@ const STATUS_DONE_COLOR = '#f5d90a';
 const STATUS_COLOR = '#f2f2ee';
 const AMMO_LOW_LABEL = 'MAG LOW';
 const AMMO_UNLIMITED_LABEL = 'UNLIMITED AMMO';
+const HEIGHT_STEP = 0.05;
+const HEIGHT_MIN = -0.5;
+const HEIGHT_MAX = 0.5;
 
 export class RangeHudSystem extends createSystem({
   game: { required: [RangeGame] },
@@ -43,8 +47,11 @@ export class RangeHudSystem extends createSystem({
   private ammoAlert: UIKit.Text | null = null;
   private modeUnlimited: UIKit.Text | null = null;
   private modeReloading: UIKit.Text | null = null;
+  private weaponPistol: UIKit.Text | null = null;
+  private weaponSmg: UIKit.Text | null = null;
   private sizeRow: UIKit.Text | null = null;
   private sizeValue: UIKit.Text | null = null;
+  private heightValue: UIKit.Text | null = null;
 
   private lastScore = Number.NaN;
   private lastTime = Number.NaN;
@@ -128,30 +135,44 @@ export class RangeHudSystem extends createSystem({
     return null;
   }
 
-  private firstGun(): Entity | null {
+  private firstGun(game: Entity): Entity | null {
+    const kind = this.weapon(game);
     for (const gun of this.queries.guns.entities) {
-      return gun;
+      if (gun.getValue(Gun, 'kind') === kind) {
+        return gun;
+      }
     }
     return null;
   }
 
-  /** Mirrors the pistol's magazine state and the bench settings into the panel. */
+  private weapon(game: Entity): WeaponKindValue {
+    return ((game.getValue(RangeGame, 'weapon') ?? WeaponKind.Pistol) ??
+      WeaponKind.Pistol) as WeaponKindValue;
+  }
+
+  /** Mirrors the active weapon's magazine state and the bench settings. */
   private updateAmmo(game: Entity): void {
     if (this.ammoValue == null) {
       return;
     }
-    const gun = this.firstGun();
+    const gun = this.firstGun(game);
     if (gun == null) {
       return;
     }
+    const weapon = this.weapon(game);
     const unlimited =
       (game.getValue(RangeGame, 'ammoMode') ?? AmmoMode.Reloading) ===
       AmmoMode.Unlimited;
-    const size = game.getValue(RangeGame, 'magazineSize') ?? 8;
+    const size = game.getValue(RangeGame, 'magazineSize') ?? WEAPON_MAGAZINE[weapon].size;
     const ammo = gun.getValue(Gun, 'ammo') ?? 0;
     const hasMag = gun.getValue(Gun, 'magIn') !== false;
     const needsRack = gun.getValue(Gun, 'needsRack') === true;
-    const signature = `${unlimited}|${size}|${ammo}|${hasMag}|${needsRack}`;
+    const automatic = gun.getValue(Gun, 'automatic') === true;
+    const height = game.getValue(RangeGame, 'heightOffset') ?? 0;
+    this.heightValue?.setProperties({
+      text: `${height >= 0 ? '+' : ''}${height.toFixed(2)} m`,
+    });
+    const signature = `${weapon}|${unlimited}|${size}|${ammo}|${hasMag}|${needsRack}`;
     if (signature === this.lastAmmoSignature) {
       return;
     }
@@ -171,12 +192,17 @@ export class RangeHudSystem extends createSystem({
           : needsRack
             ? 'RACK THE SLIDE'
             : '';
+    // A 30-round magazine runs dry later than an 8-round one, so the low warning
+    // scales with capacity instead of using one absolute count.
+    const lowCount = Math.max(2, Math.round(size * 0.2));
     this.ammoHint?.setProperties({
       text: unlimited
         ? AMMO_UNLIMITED_LABEL
-        : ammo <= 2
+        : ammo <= lowCount
           ? AMMO_LOW_LABEL
-          : 'READY',
+          : automatic
+            ? 'AUTO - READY'
+            : 'READY',
       display: alert === '' ? 'flex' : 'none',
     });
     this.ammoAlert?.setProperties({
@@ -184,14 +210,16 @@ export class RangeHudSystem extends createSystem({
       display: alert === '' ? 'none' : 'flex',
     });
 
-    this.setModeActive(this.modeUnlimited, unlimited);
-    this.setModeActive(this.modeReloading, !unlimited);
+    this.setPillActive(this.modeUnlimited, unlimited);
+    this.setPillActive(this.modeReloading, !unlimited);
+    this.setPillActive(this.weaponPistol, weapon === WeaponKind.Pistol);
+    this.setPillActive(this.weaponSmg, weapon === WeaponKind.SMG);
     this.sizeRow?.setProperties({ display: unlimited ? 'none' : 'flex' });
     this.sizeValue?.setProperties({ text: String(size) });
   }
 
   /** Toggling a class avoids fighting the dark-scheme rules with inline styles. */
-  private setModeActive(element: UIKit.Text | null, active: boolean): void {
+  private setPillActive(element: UIKit.Text | null, active: boolean): void {
     if (element == null) {
       return;
     }
@@ -219,9 +247,13 @@ export class RangeHudSystem extends createSystem({
       panel.getElementById<UIKit.Text>('mode-unlimited') ?? null;
     this.modeReloading =
       panel.getElementById<UIKit.Text>('mode-reloading') ?? null;
+    this.weaponPistol = panel.getElementById<UIKit.Text>('weapon-pistol') ?? null;
+    this.weaponSmg = panel.getElementById<UIKit.Text>('weapon-smg') ?? null;
     this.sizeRow = panel.getElementById<UIKit.Text>('mag-size-row') ?? null;
     this.sizeValue =
       panel.getElementById<UIKit.Text>('mag-size-value') ?? null;
+    this.heightValue =
+      panel.getElementById<UIKit.Text>('height-value') ?? null;
     value.name = 'AmmoValue';
     if (this.ammoHint != null) this.ammoHint.name = 'AmmoHint';
     if (this.ammoAlert != null) this.ammoAlert.name = 'AmmoAlert';
@@ -230,32 +262,63 @@ export class RangeHudSystem extends createSystem({
     const setMode = (mode: string) => {
       this.gameEntity()?.setValue(RangeGame, 'ammoMode', mode);
     };
+    const setWeapon = (weapon: WeaponKindValue) => {
+      this.gameEntity()?.setValue(RangeGame, 'weapon', weapon);
+    };
     const stepSize = (step: number) => {
       const game = this.gameEntity();
       if (game == null) {
         return;
       }
-      const size = game.getValue(RangeGame, 'magazineSize') ?? 8;
+      const bounds = WEAPON_MAGAZINE[this.weapon(game)];
+      const size = game.getValue(RangeGame, 'magazineSize') ?? bounds.size;
       game.setValue(
         RangeGame,
         'magazineSize',
-        Math.min(MAGAZINE_MAX, Math.max(MAGAZINE_MIN, size + step)),
+        Math.min(bounds.max, Math.max(bounds.min, size + step)),
       );
     };
 
     const unlimited = () => setMode(AmmoMode.Unlimited);
     const reloading = () => setMode(AmmoMode.Reloading);
+    const pickPistol = () => setWeapon(WeaponKind.Pistol);
+    const pickSmg = () => setWeapon(WeaponKind.SMG);
     const smaller = () => stepSize(-1);
     const larger = () => stepSize(1);
+    const stepHeight = (direction: number) => {
+      const game = this.gameEntity();
+      if (game == null) {
+        return;
+      }
+      const height = game.getValue(RangeGame, 'heightOffset') ?? 0;
+      const next = Math.min(
+        HEIGHT_MAX,
+        Math.max(
+          HEIGHT_MIN,
+          Math.round((height + direction * HEIGHT_STEP) / HEIGHT_STEP) * HEIGHT_STEP,
+        ),
+      );
+      game.setValue(RangeGame, 'heightOffset', next);
+    };
+    const lowerExperience = () => stepHeight(-1);
+    const raiseExperience = () => stepHeight(1);
     this.modeUnlimited?.addEventListener('click', unlimited);
     this.modeReloading?.addEventListener('click', reloading);
+    this.weaponPistol?.addEventListener('click', pickPistol);
+    this.weaponSmg?.addEventListener('click', pickSmg);
     panel.getElementById('mag-minus')?.addEventListener('click', smaller);
     panel.getElementById('mag-plus')?.addEventListener('click', larger);
+    panel.getElementById('height-minus')?.addEventListener('click', lowerExperience);
+    panel.getElementById('height-plus')?.addEventListener('click', raiseExperience);
     this.cleanupFuncs.push(
       () => this.modeUnlimited?.removeEventListener('click', unlimited),
       () => this.modeReloading?.removeEventListener('click', reloading),
+      () => this.weaponPistol?.removeEventListener('click', pickPistol),
+      () => this.weaponSmg?.removeEventListener('click', pickSmg),
       () => panel.getElementById('mag-minus')?.removeEventListener('click', smaller),
       () => panel.getElementById('mag-plus')?.removeEventListener('click', larger),
+      () => panel.getElementById('height-minus')?.removeEventListener('click', lowerExperience),
+      () => panel.getElementById('height-plus')?.removeEventListener('click', raiseExperience),
     );
 
     this.ammoConnected = true;

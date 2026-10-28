@@ -3,9 +3,10 @@
  *
  * Local frame: origin sits at the top of the grip (the web of the hand), +Y is
  * up, -Z is the muzzle direction. Size envelope is roughly 0.20 x 0.14 x 0.035 m,
- * so the model reads at arm's length. `Recoil`, `Muzzle`, `MuzzleFlash` and
- * `Tracer` are named runtime hooks for the shooting system; the flash and tracer
- * are hidden by default and excluded from preview framing.
+ * so the model reads at arm's length. `Recoil`, `Muzzle`, `MuzzleFlash`,
+ * `Tracer`, `Slide`, `MagWell`, `MagEject` and `RackZone` are named runtime
+ * hooks for the shooting and reload systems; the flash and tracer are hidden by
+ * default and excluded from preview framing.
  */
 
 import {
@@ -58,6 +59,13 @@ function createMaterials() {
       opacity: 0.92,
       blending: AdditiveBlending,
       depthWrite: false,
+    }),
+    // Invisible, but still raycast: this is the rack zone, not a visual.
+    marker: new MeshStandardMaterial({
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      colorWrite: false,
     }),
   };
 }
@@ -219,6 +227,11 @@ export function createPistol(): Object3D {
   recoil.name = 'Recoil';
   root.add(recoil);
 
+  const gripPoint = new Group();
+  gripPoint.name = 'GripPoint';
+  gripPoint.position.set(0, -0.045, 0.003);
+  root.add(gripPoint);
+
   const slide = new Group();
   slide.name = 'Slide';
   recoil.add(slide);
@@ -344,6 +357,29 @@ export function createPistol(): Object3D {
   muzzle.name = 'Muzzle';
   muzzle.position.set(0, MUZZLE_Y, MUZZLE_Z);
   recoil.add(muzzle);
+
+  // Reload markers. `MagWell` is where a seated magazine's origin belongs (the
+  // insert test), `MagEject` is where an ejected magazine appears (the drop).
+  // Both are empty groups, so they never affect bounds.
+  const magWell = new Group();
+  magWell.name = 'MagWell';
+  magWell.position.set(0, -0.06, 0);
+  recoil.add(magWell);
+
+  const magEject = new Group();
+  magEject.name = 'MagEject';
+  magEject.position.set(0, -0.1, 0.006);
+  recoil.add(magEject);
+
+  // Invisible box the free hand must be inside to rack the slide.
+  const rackZone = addMesh(
+    recoil,
+    new BoxGeometry(0.26, 0.15, 0.42),
+    materials.marker,
+    [0, 0.055, -0.01],
+  );
+  rackZone.name = 'RackZone';
+  rackZone.userData.iwsdkPreviewBounds = 'exclude';
 
   const flash = new Group();
   flash.name = 'MuzzleFlash';

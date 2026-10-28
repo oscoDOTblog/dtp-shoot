@@ -110,6 +110,10 @@
     width: 76;
   }
 
+  .weapon-label {
+    margin-top: 5;
+  }
+
   .size-row {
     flex-direction: row;
     align-items: center;
@@ -164,11 +168,47 @@
   .size-value:dark {
     color: #fafaf7;
   }
+
+  .height-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 5;
+    margin-top: 3;
+  }
+
+  .height-label {
+    width: 46;
+    color: #4a4b50;
+    font-size: 7.5;
+    font-weight: 700;
+    letter-spacing: 0.55;
+  }
+
+  .height-label:dark {
+    color: #9ea3ad;
+  }
+
+  .height-value {
+    width: 34;
+    color: #1c1d20;
+    font-size: 10;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .height-value:dark {
+    color: #fafaf7;
+  }
 </style>
 <Panel class="ammo-root">
   <span class="ammo-label">MAGAZINE</span>
   <span id="ammo-value" class="ammo-value">8 / 8</span>
   <span id="ammo-hint" class="ammo-hint">READY</span>
+  <span class="ammo-label weapon-label">WEAPON</span>
+  <div class="mode-row">
+    <div id="weapon-pistol" class="mode">PISTOL</div>
+    <div id="weapon-smg" class="mode">SMG</div>
+  </div>
   <div class="mode-row">
     <div id="mode-unlimited" class="mode">UNLIMITED</div>
     <div id="mode-reloading" class="mode mode-reloading">RELOADING</div>
@@ -178,6 +218,12 @@
     <div id="mag-minus" class="step">-</div>
     <span id="mag-size-value" class="size-value">8</span>
     <div id="mag-plus" class="step">+</div>
+  </div>
+  <div class="height-row">
+    <span class="height-label">HEIGHT</span>
+    <div id="height-minus" class="step">-</div>
+    <span id="height-value" class="height-value">0.00 m</span>
+    <div id="height-plus" class="step">+</div>
   </div>
   <span id="ammo-alert" class="ammo-alert" style="display: none">PRESS A TO DROP MAG</span>
 </Panel>

@@ -71,7 +71,10 @@
           "restartRequested": false,
           "status": "Grab the pistol and pull the trigger",
           "ammoMode": "Reloading",
-          "magazineSize": 8
+          "weapon": "Pistol",
+          "magazineSize": 8,
+          "pistolMagazineSize": 8,
+          "smgMagazineSize": 30
         },
         "AudioSource": {
           "src": "pistol-dry",
@@ -138,6 +141,8 @@
           "translate": true
         },
         "Gun": {
+          "kind": "Pistol",
+          "automatic": false,
           "fireInterval": 0.16,
           "recoil": 0,
           "flashTime": 0,
@@ -146,7 +151,8 @@
           "magazineSize": 8,
           "magIn": true,
           "needsRack": false,
-          "rackPull": 0
+          "rackPull": 0,
+          "slideTravel": 0.02
         },
         "AudioSource": {
           "src": "pistol-shot",
@@ -157,6 +163,95 @@
           "refDistance": 0.8,
           "maxDistance": 20,
           "maxInstances": 4
+        }
+      }
+    },
+    {
+      "id": "smg",
+      "name": "SMG",
+      "content": {
+        "type": "asset",
+        "asset": "smg",
+        "castShadow": true
+      },
+      "transform": {
+        "position": [0.28, 1.037, -0.9]
+      },
+      "metadata": {
+        "iwsdk.validation": {
+          "allowFloating": true
+        }
+      },
+      "components": {
+        "RayInteractable": {},
+        "OneHandGrabbable": {
+          "rotate": true,
+          "translate": true
+        },
+        "Gun": {
+          "kind": "SMG",
+          "automatic": true,
+          "twoHanded": true,
+          "fireInterval": 0.085,
+          "recoil": 0,
+          "flashTime": 0,
+          "tracerTime": 0,
+          "ammo": 30,
+          "magazineSize": 30,
+          "magIn": true,
+          "needsRack": false,
+          "rackPull": 0,
+          "slideTravel": 0.045
+        },
+        "AudioSource": {
+          "src": "smg-shot",
+          "volume": 0.42,
+          "loop": false,
+          "autoplay": false,
+          "positional": true,
+          "refDistance": 0.8,
+          "maxDistance": 20,
+          "maxInstances": 4
+        }
+      }
+    },
+    {
+      "id": "smg-magazine-1",
+      "name": "Spare SMG Magazine 1",
+      "content": { "type": "asset", "asset": "smg-magazine", "castShadow": true },
+      "transform": {
+        "position": [-0.38, 0.932, -0.88],
+        "rotationDeg": [0, 22, 0]
+      },
+      "components": {
+        "OneHandGrabbable": {
+          "rotate": true,
+          "translate": true
+        },
+        "Magazine": { "kind": "SMG", "rounds": 30, "ready": true, "respawn": 0 },
+        "ContactShadow": {
+          "size": [0.08, 0.08],
+          "height": 0.002
+        }
+      }
+    },
+    {
+      "id": "smg-magazine-2",
+      "name": "Spare SMG Magazine 2",
+      "content": { "type": "asset", "asset": "smg-magazine", "castShadow": true },
+      "transform": {
+        "position": [-0.52, 0.932, -0.98],
+        "rotationDeg": [0, -18, 0]
+      },
+      "components": {
+        "OneHandGrabbable": {
+          "rotate": true,
+          "translate": true
+        },
+        "Magazine": { "kind": "SMG", "rounds": 30, "ready": true, "respawn": 0 },
+        "ContactShadow": {
+          "size": [0.08, 0.08],
+          "height": 0.002
         }
       }
     },
@@ -173,7 +268,7 @@
           "rotate": true,
           "translate": true
         },
-        "Magazine": { "rounds": 8, "ready": true, "respawn": 0 },
+        "Magazine": { "kind": "Pistol", "rounds": 8, "ready": true, "respawn": 0 },
         "ContactShadow": {
           "size": [0.07, 0.07],
           "height": 0.002
@@ -193,7 +288,7 @@
           "rotate": true,
           "translate": true
         },
-        "Magazine": { "rounds": 8, "ready": true, "respawn": 0 },
+        "Magazine": { "kind": "Pistol", "rounds": 8, "ready": true, "respawn": 0 },
         "ContactShadow": {
           "size": [0.07, 0.07],
           "height": 0.002
@@ -229,6 +324,39 @@
       }
     },
     {
+      "id": "smg-mech",
+      "name": "SMG Mechanism",
+      "components": {
+        "AudioSource": {
+          "src": "smg-rack",
+          "volume": 0.5,
+          "loop": false,
+          "autoplay": false,
+          "positional": false,
+          "maxInstances": 2
+        }
+      }
+    },
+    {
+      "id": "smg-dropped-magazine",
+      "name": "Dropped SMG Magazine",
+      "content": { "type": "asset", "asset": "smg-magazine", "castShadow": true },
+      "transform": { "position": [0.28, 0.84, -0.9] },
+      "metadata": {
+        "iwsdk.validation": { "allowFloating": true }
+      },
+      "components": {
+        "AudioSource": {
+          "src": "smg-magout",
+          "volume": 0.6,
+          "loop": false,
+          "autoplay": false,
+          "positional": false,
+          "maxInstances": 2
+        }
+      }
+    },
+    {
       "id": "dropped-magazine",
       "name": "Dropped Magazine",
       "content": { "type": "asset", "asset": "magazine", "castShadow": true },
@@ -252,7 +380,7 @@
       "name": "Ammo Readout",
       "content": { "type": "asset", "asset": "ammo-readout" },
       "transform": {
-        "position": [-0.16, 1.008, -1.0],
+        "position": [-0.16, 1.045, -1.0],
         "rotationDeg": [-30, 0, 0],
         "scale": 0.15
       },
