@@ -14,6 +14,16 @@ export const TargetState = {
   Hit: 'Hit',
 } as const;
 
+/** Bench-selectable ammo behaviour. */
+export const AmmoMode = {
+  Unlimited: 'Unlimited',
+  Reloading: 'Reloading',
+} as const;
+
+/** Bounds for the bench magazine-size counter. */
+export const MAGAZINE_MIN = 1;
+export const MAGAZINE_MAX = 12;
+
 /** A pop-up scoring plate. */
 export const Target = createComponent('Target', {
   points: { type: Types.Int32, default: 100, min: 10, step: 10 },
@@ -35,8 +45,8 @@ export const Gun = createComponent('Gun', {
   recoil: { type: Types.Float32, default: 0 },
   flashTime: { type: Types.Float32, default: 0 },
   tracerTime: { type: Types.Float32, default: 0 },
-  ammo: { type: Types.Int32, default: 6, min: 0, step: 1 },
-  magazineSize: { type: Types.Int32, default: 6, min: 1, step: 1 },
+  ammo: { type: Types.Int32, default: 8, min: 0, step: 1 },
+  magazineSize: { type: Types.Int32, default: 8, min: 1, step: 1 },
   magIn: { type: Types.Boolean, default: true, label: 'Magazine seated' },
   needsRack: { type: Types.Boolean, default: false, label: 'Slide locked back' },
   rackPull: { type: Types.Float32, default: 0, label: 'Slide pull (m)' },
@@ -44,7 +54,7 @@ export const Gun = createComponent('Gun', {
 
 /** A spare magazine resting on the bench. */
 export const Magazine = createComponent('Magazine', {
-  rounds: { type: Types.Int32, default: 6, min: 0, step: 1 },
+  rounds: { type: Types.Int32, default: 8, min: 0, step: 1 },
   ready: { type: Types.Boolean, default: true },
   respawn: { type: Types.Float32, default: 0, label: 'Respawn timer' },
 });
@@ -62,4 +72,18 @@ export const RangeGame = createComponent('RangeGame', {
   hitPulse: { type: Types.Float32, default: 0 },
   restartRequested: { type: Types.Boolean, default: false },
   status: { type: Types.String, default: 'Grab the pistol and pull the trigger' },
+  ammoMode: {
+    type: Types.Enum,
+    default: AmmoMode.Reloading,
+    enum: AmmoMode,
+    label: 'Ammo mode',
+  },
+  magazineSize: {
+    type: Types.Int32,
+    default: 8,
+    min: MAGAZINE_MIN,
+    max: MAGAZINE_MAX,
+    step: 1,
+    label: 'Magazine size',
+  },
 });

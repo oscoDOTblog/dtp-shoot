@@ -51,6 +51,13 @@ function createMaterials() {
       metalness: 0.15,
       roughness: 0.5,
     }),
+    // Invisible, but still raycast: this is the grab volume, not a visual.
+    grab: new MeshStandardMaterial({
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      colorWrite: false,
+    }),
   };
 }
 
@@ -157,6 +164,20 @@ export function createMagazine(): Object3D {
     materials.brass,
     [0, BODY_TOP - 0.004, -0.0135],
   ).rotation.x = Math.PI / 2;
+
+  // Near grab tests a 7 cm sphere at the controller grip, and a real magazine
+  // is small enough that a hurried hand misses it entirely. This invisible box
+  // triples the usable grab target without changing what the player sees.
+  // It has to stay `visible` (the grab pointer filters on that) and keeps the
+  // material fully transparent so it never draws.
+  const grabProxy = addMesh(
+    root,
+    new BoxGeometry(0.115, 0.2, 0.115),
+    materials.grab,
+    [0, 0.08, 0],
+  );
+  grabProxy.name = 'GrabProxy';
+  grabProxy.userData.iwsdkPreviewBounds = 'exclude';
 
   return root;
 }

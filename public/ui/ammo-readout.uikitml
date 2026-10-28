@@ -1,12 +1,13 @@
 <!--
-  DTP Shoot bench ammo readout. Placed at ~0.15 node scale so 132 units reads as
-  a small instrument panel next to the pistol, not a wall display.
+  DTP Shoot bench ammo readout: live magazine state plus the two settings the
+  player can change without leaving the range (ammo mode, magazine size).
+  Placed at ~0.15 node scale so 176 units reads as a small instrument panel.
   Dark scheme at runtime, light in editor previews, so text colors have :dark.
 -->
 <style>
   .ammo-root {
     flex-direction: column;
-    width: 132;
+    width: 176;
     padding-top: 8;
     padding-bottom: 9;
     padding-left: 11;
@@ -27,7 +28,7 @@
 
   .ammo-value {
     color: #1c1d20;
-    font-size: 34;
+    font-size: 30;
     font-weight: 700;
     line-height: 1;
   }
@@ -50,7 +51,7 @@
   }
 
   .ammo-alert {
-    margin-top: 1;
+    margin-top: 2;
     color: #a03000;
     font-size: 10.5;
     font-weight: 700;
@@ -61,10 +62,122 @@
   .ammo-alert:dark {
     color: #ff8a4a;
   }
+
+  .mode-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 4;
+    margin-top: 2;
+  }
+
+  .mode {
+    height: 18;
+    min-width: 0;
+    width: 70;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    border-radius: 3;
+    border-width: 0.6;
+    border-color: #b3ad9c;
+    background-color: #e6e1d3;
+    color: #33343a;
+    font-size: 8;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .mode:dark {
+    border-color: #5c6069;
+    background-color: #33363d;
+    color: #d3d6dc;
+  }
+
+  .mode-on {
+    border-color: #f5d90a;
+    background-color: #f5d90a;
+    color: #17181b;
+  }
+
+  .mode-on:dark {
+    border-color: #f5d90a;
+    background-color: #f5d90a;
+    color: #17181b;
+  }
+
+  .mode-reloading {
+    width: 76;
+  }
+
+  .size-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 5;
+    margin-top: 3;
+  }
+
+  .size-label {
+    width: 46;
+    color: #4a4b50;
+    font-size: 7.5;
+    font-weight: 700;
+    letter-spacing: 0.55;
+  }
+
+  .size-label:dark {
+    color: #9ea3ad;
+  }
+
+  .step {
+    height: 18;
+    min-width: 0;
+    width: 18;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    border-radius: 3;
+    border-width: 0.6;
+    border-color: #b3ad9c;
+    background-color: #e6e1d3;
+    color: #33343a;
+    font-size: 12;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .step:dark {
+    border-color: #5c6069;
+    background-color: #33363d;
+    color: #d3d6dc;
+  }
+
+  .size-value {
+    width: 18;
+    color: #1c1d20;
+    font-size: 14;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .size-value:dark {
+    color: #fafaf7;
+  }
 </style>
 <Panel class="ammo-root">
   <span class="ammo-label">MAGAZINE</span>
-  <span id="ammo-value" class="ammo-value">6 / 6</span>
+  <span id="ammo-value" class="ammo-value">8 / 8</span>
   <span id="ammo-hint" class="ammo-hint">READY</span>
+  <div class="mode-row">
+    <div id="mode-unlimited" class="mode">UNLIMITED</div>
+    <div id="mode-reloading" class="mode mode-reloading">RELOADING</div>
+  </div>
+  <div id="mag-size-row" class="size-row">
+    <span class="size-label">MAG SIZE</span>
+    <div id="mag-minus" class="step">-</div>
+    <span id="mag-size-value" class="size-value">8</span>
+    <div id="mag-plus" class="step">+</div>
+  </div>
   <span id="ammo-alert" class="ammo-alert" style="display: none">PRESS A TO DROP MAG</span>
 </Panel>

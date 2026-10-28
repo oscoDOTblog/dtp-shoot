@@ -69,7 +69,9 @@
           "lastHitPoints": 0,
           "hitPulse": 0,
           "restartRequested": false,
-          "status": "Grab the pistol and pull the trigger"
+          "status": "Grab the pistol and pull the trigger",
+          "ammoMode": "Reloading",
+          "magazineSize": 8
         },
         "AudioSource": {
           "src": "pistol-dry",
@@ -140,8 +142,8 @@
           "recoil": 0,
           "flashTime": 0,
           "tracerTime": 0,
-          "ammo": 6,
-          "magazineSize": 6,
+          "ammo": 8,
+          "magazineSize": 8,
           "magIn": true,
           "needsRack": false,
           "rackPull": 0
@@ -171,7 +173,7 @@
           "rotate": true,
           "translate": true
         },
-        "Magazine": { "rounds": 6, "ready": true, "respawn": 0 },
+        "Magazine": { "rounds": 8, "ready": true, "respawn": 0 },
         "ContactShadow": {
           "size": [0.07, 0.07],
           "height": 0.002
@@ -191,7 +193,7 @@
           "rotate": true,
           "translate": true
         },
-        "Magazine": { "rounds": 6, "ready": true, "respawn": 0 },
+        "Magazine": { "rounds": 8, "ready": true, "respawn": 0 },
         "ContactShadow": {
           "size": [0.07, 0.07],
           "height": 0.002
@@ -205,6 +207,20 @@
         "AudioSource": {
           "src": "pistol-rack",
           "volume": 0.45,
+          "loop": false,
+          "autoplay": false,
+          "positional": false,
+          "maxInstances": 2
+        }
+      }
+    },
+    {
+      "id": "gun-alert",
+      "name": "Gun Alert",
+      "components": {
+        "AudioSource": {
+          "src": "pistol-empty",
+          "volume": 0.55,
           "loop": false,
           "autoplay": false,
           "positional": false,
@@ -236,9 +252,13 @@
       "name": "Ammo Readout",
       "content": { "type": "asset", "asset": "ammo-readout" },
       "transform": {
-        "position": [-0.16, 0.99, -1.0],
+        "position": [-0.16, 1.008, -1.0],
         "rotationDeg": [-30, 0, 0],
         "scale": 0.15
+      },
+      "components": {
+        "RayInteractable": {},
+        "PokeInteractable": {}
       }
     },
     {

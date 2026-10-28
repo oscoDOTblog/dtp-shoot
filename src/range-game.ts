@@ -17,7 +17,16 @@ import {
   createSystem,
 } from '@iwsdk/core';
 import type { Entity, Object3D } from '@iwsdk/core';
-import { Gun, Magazine, RangeGame, Target, TargetState } from './range-components.js';
+import {
+  AmmoMode,
+  Gun,
+  MAGAZINE_MAX,
+  MAGAZINE_MIN,
+  Magazine,
+  RangeGame,
+  Target,
+  TargetState,
+} from './range-components.js';
 
 const DOWN_ANGLE = -1.45;
 const RISE_RATE = 8.5;
@@ -58,6 +67,8 @@ const DEFAULT_STATUS = 'Grab the pistol and pull the trigger';
 const EMPTY_STATUS = 'Out of ammo. Press A to drop the magazine';
 const NO_MAG_STATUS = 'Magazine out. Grab a spare and press it into the grip';
 const RACK_STATUS = 'Grab the slide with your free hand and pull it back';
+const UNLIMITED_STATUS = 'Unlimited ammo. Pull the trigger';
+const UNLIMITED_LIVE_STATUS = 'Unlimited ammo. Keep shooting';
 const FINISHED_STATUS = 'Round over. Pull the trigger to go again';
 
 type TargetRuntime = { arm: Object3D | null; head: Object3D | null };
@@ -125,10 +136,14 @@ export class RangeGameSystem extends createSystem({
   };
   private audioContext: AudioContext | null = null;
   private gunMech: Entity | null = null;
+  private gunAlert: Entity | null = null;
+  private alertResolved = false;
   private droppedMagazine: Entity | null = null;
   private dropResolved = false;
   private dropCount = 0;
   private spawnTimer = 0;
+  private syncedMode: string | null = null;
+  private syncedMagazineSize = -1;
 
   init(): void {
     this.raycaster.far = MAX_SHOT_DISTANCE;
@@ -149,6 +164,8 @@ export class RangeGameSystem extends createSystem({
       return;
     }
 
+    this.syncAmmoSettings(game);
+
     if (game.getValue(RangeGame, 'restartRequested') === true) {
       game.setValue(RangeGame, 'restartRequested', false);
       this.resetRound(game);
@@ -168,6 +185,57 @@ export class RangeGameSystem extends createSystem({
       return entity;
     }
     return null;
+  }
+
+  /**
+   * The bench panel writes the ammo mode and magazine size into the singleton
+   * game state. Mirror any change onto the pistol and spare magazines so the
+   * next reload uses it; a mode change also resets the pistol to a clean, live
+   * state instead of leaving it dry or slid-open.
+   */
+  private syncAmmoSettings(game: Entity): void {
+    if (this.firstGun() == null) {
+      return;
+    }
+    const rawSize = game.getValue(RangeGame, 'magazineSize') ?? 8;
+    const size = Math.min(MAGAZINE_MAX, Math.max(MAGAZINE_MIN, rawSize));
+    const mode =
+      (game.getValue(RangeGame, 'ammoMode') ?? AmmoMode.Reloading) as string;
+    if (mode === this.syncedMode && size === this.syncedMagazineSize) {
+      return;
+    }
+    const first = this.syncedMode == null;
+    this.syncedMode = mode;
+    this.syncedMagazineSize = size;
+    if (rawSize !== size) {
+      game.setValue(RangeGame, 'magazineSize', size);
+    }
+
+    for (const gun of this.queries.guns.entities) {
+      gun.setValue(Gun, 'magazineSize', size);
+    }
+    for (const magazine of this.queries.magazines.entities) {
+      magazine.setValue(Magazine, 'rounds', size);
+    }
+    if (first) {
+      // Adopt the authored setup without overwriting a scene-authored clip.
+      return;
+    }
+
+    this.refillGuns();
+    game.setValue(
+      RangeGame,
+      'status',
+      mode === AmmoMode.Unlimited ? UNLIMITED_STATUS : this.idleStatus(game),
+    );
+    game.setValue(RangeGame, 'hitPulse', 0.9);
+  }
+
+  private isUnlimited(game: Entity): boolean {
+    return (
+      (game.getValue(RangeGame, 'ammoMode') ?? AmmoMode.Reloading) ===
+      AmmoMode.Unlimited
+    );
   }
 
   private resetRound(game: Entity): void {
@@ -226,7 +294,12 @@ export class RangeGameSystem extends createSystem({
     if (game.getValue(RangeGame, 'finished') === true) {
       return FINISHED_STATUS;
     }
-    const issue = this.gunIssue(this.firstGun());
+    if (this.isUnlimited(game)) {
+      return game.getValue(RangeGame, 'running') === true
+        ? UNLIMITED_LIVE_STATUS
+        : UNLIMITED_STATUS;
+    }
+    const issue = this.gunIssue(game, this.firstGun());
     if (issue != null) {
       return issue;
     }
@@ -236,8 +309,8 @@ export class RangeGameSystem extends createSystem({
   }
 
   /** What stops this pistol from firing, if anything. */
-  private gunIssue(gun: Entity | null): string | null {
-    if (gun == null) {
+  private gunIssue(game: Entity, gun: Entity | null): string | null {
+    if (gun == null || this.isUnlimited(game)) {
       return null;
     }
     if (gun.getValue(Gun, 'magIn') === false) {
@@ -364,11 +437,14 @@ export class RangeGameSystem extends createSystem({
       gun.setValue(Gun, 'recoil', 1);
       gun.setValue(Gun, 'flashTime', 0.055);
       gun.setValue(Gun, 'tracerTime', 0.035);
-      const ammo = Math.max(0, (gun.getValue(Gun, 'ammo') ?? 1) - 1);
-      gun.setValue(Gun, 'ammo', ammo);
-      if (ammo <= 0) {
-        // The last round leaves the slide locked back until it is racked.
-        gun.setValue(Gun, 'needsRack', true);
+      if (!this.isUnlimited(game)) {
+        const ammo = Math.max(0, (gun.getValue(Gun, 'ammo') ?? 1) - 1);
+        gun.setValue(Gun, 'ammo', ammo);
+        if (ammo <= 0) {
+          // The last round leaves the slide locked back until it is racked.
+          gun.setValue(Gun, 'needsRack', true);
+          this.playEmpty();
+        }
       }
       if (runtime.flash != null) {
         runtime.flash.visible = true;
@@ -408,7 +484,7 @@ export class RangeGameSystem extends createSystem({
     if (hitEntity == null) {
       // Running the magazine dry turns the HUD status into the next step.
       if (gun != null) {
-        const issue = this.gunIssue(gun);
+        const issue = this.gunIssue(game, gun);
         if (issue != null) {
           game.setValue(RangeGame, 'status', issue);
         }
@@ -469,7 +545,7 @@ export class RangeGameSystem extends createSystem({
   /** A trigger pull that cannot fire still clicks. */
   private dryFire(game: Entity, gun: Entity): void {
     gun.setValue(Gun, 'cooldown', 0.35);
-    game.setValue(RangeGame, 'status', this.gunIssue(gun) ?? EMPTY_STATUS);
+    game.setValue(RangeGame, 'status', this.gunIssue(game, gun) ?? EMPTY_STATUS);
     this.playDry(game);
   }
 
@@ -495,7 +571,7 @@ export class RangeGameSystem extends createSystem({
     const eject =
       this.input.xr.gamepads.right?.getButtonDown(InputComponent.A_Button) ===
       true;
-    if (!eject) {
+    if (!eject || this.isUnlimited(game)) {
       return;
     }
     const gun = this.firstHeldGun() ?? this.firstGun();
@@ -610,6 +686,19 @@ export class RangeGameSystem extends createSystem({
   private playMagOut(): void {
     this.resumeAudio();
     this.droppedMagazineEntity()?.setValue(AudioSource, '_playRequested', true);
+  }
+
+  /**
+   * The slide-locks-open clack plus a short two-note cue: the audible signal
+   * that the magazine is spent and has to come out.
+   */
+  private playEmpty(): void {
+    this.resumeAudio();
+    if (!this.alertResolved) {
+      this.gunAlert = this.world.getSceneEntity('gun-alert') ?? null;
+      this.alertResolved = this.gunAlert != null;
+    }
+    this.gunAlert?.setValue(AudioSource, '_playRequested', true);
   }
 
   /**

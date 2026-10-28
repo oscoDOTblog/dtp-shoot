@@ -12,13 +12,20 @@ import {
   createSystem,
 } from '@iwsdk/core';
 import type { Entity } from '@iwsdk/core';
-import { Gun, RangeGame } from './range-components.js';
+import {
+  AmmoMode,
+  Gun,
+  MAGAZINE_MAX,
+  MAGAZINE_MIN,
+  RangeGame,
+} from './range-components.js';
 
 const TIME_LOW_COLOR = '#ff8a5a';
 const TIME_COLOR = '#fafaf7';
 const STATUS_DONE_COLOR = '#f5d90a';
 const STATUS_COLOR = '#f2f2ee';
 const AMMO_LOW_LABEL = 'MAG LOW';
+const AMMO_UNLIMITED_LABEL = 'UNLIMITED AMMO';
 
 export class RangeHudSystem extends createSystem({
   game: { required: [RangeGame] },
@@ -34,6 +41,10 @@ export class RangeHudSystem extends createSystem({
   private ammoValue: UIKit.Text | null = null;
   private ammoHint: UIKit.Text | null = null;
   private ammoAlert: UIKit.Text | null = null;
+  private modeUnlimited: UIKit.Text | null = null;
+  private modeReloading: UIKit.Text | null = null;
+  private sizeRow: UIKit.Text | null = null;
+  private sizeValue: UIKit.Text | null = null;
 
   private lastScore = Number.NaN;
   private lastTime = Number.NaN;
@@ -55,7 +66,7 @@ export class RangeHudSystem extends createSystem({
       return;
     }
 
-    this.updateAmmo();
+    this.updateAmmo(game);
 
     if (this.scoreText != null) {
       const score = game.getValue(RangeGame, 'score') ?? 0;
@@ -124,8 +135,8 @@ export class RangeHudSystem extends createSystem({
     return null;
   }
 
-  /** Mirrors the pistol's magazine and slide state into the bench readout. */
-  private updateAmmo(): void {
+  /** Mirrors the pistol's magazine state and the bench settings into the panel. */
+  private updateAmmo(game: Entity): void {
     if (this.ammoValue == null) {
       return;
     }
@@ -133,33 +144,63 @@ export class RangeHudSystem extends createSystem({
     if (gun == null) {
       return;
     }
+    const unlimited =
+      (game.getValue(RangeGame, 'ammoMode') ?? AmmoMode.Reloading) ===
+      AmmoMode.Unlimited;
+    const size = game.getValue(RangeGame, 'magazineSize') ?? 8;
     const ammo = gun.getValue(Gun, 'ammo') ?? 0;
-    const size = gun.getValue(Gun, 'magazineSize') ?? 6;
     const hasMag = gun.getValue(Gun, 'magIn') !== false;
     const needsRack = gun.getValue(Gun, 'needsRack') === true;
-    const signature = `${ammo}|${size}|${hasMag}|${needsRack}`;
+    const signature = `${unlimited}|${size}|${ammo}|${hasMag}|${needsRack}`;
     if (signature === this.lastAmmoSignature) {
       return;
     }
     this.lastAmmoSignature = signature;
 
-    this.ammoValue.setProperties({ text: `${ammo} / ${size}` });
+    this.ammoValue.setProperties({
+      // The runtime font atlas has no infinity glyph, so "MAX" carries it.
+      text: unlimited ? 'MAX' : `${ammo} / ${size}`,
+    });
 
-    const alert = !hasMag
-      ? 'GRAB A SPARE MAG'
-      : ammo <= 0
-        ? 'PRESS A TO DROP MAG'
-        : needsRack
-          ? 'RACK THE SLIDE'
-          : '';
+    const alert = unlimited
+      ? ''
+      : !hasMag
+        ? 'GRAB A SPARE MAG'
+        : ammo <= 0
+          ? 'PRESS A TO DROP MAG'
+          : needsRack
+            ? 'RACK THE SLIDE'
+            : '';
     this.ammoHint?.setProperties({
-      text: ammo <= 2 ? AMMO_LOW_LABEL : 'READY',
+      text: unlimited
+        ? AMMO_UNLIMITED_LABEL
+        : ammo <= 2
+          ? AMMO_LOW_LABEL
+          : 'READY',
       display: alert === '' ? 'flex' : 'none',
     });
     this.ammoAlert?.setProperties({
       text: alert,
       display: alert === '' ? 'none' : 'flex',
     });
+
+    this.setModeActive(this.modeUnlimited, unlimited);
+    this.setModeActive(this.modeReloading, !unlimited);
+    this.sizeRow?.setProperties({ display: unlimited ? 'none' : 'flex' });
+    this.sizeValue?.setProperties({ text: String(size) });
+  }
+
+  /** Toggling a class avoids fighting the dark-scheme rules with inline styles. */
+  private setModeActive(element: UIKit.Text | null, active: boolean): void {
+    if (element == null) {
+      return;
+    }
+    const has = element.classList.contains('mode-on');
+    if (active && !has) {
+      element.classList.add('mode-on');
+    } else if (!active && has) {
+      element.classList.remove('mode-on');
+    }
   }
 
   private connectAmmo(): void {
@@ -168,17 +209,55 @@ export class RangeHudSystem extends createSystem({
       return;
     }
     const value = panel.getElementById<UIKit.Text>('ammo-value');
-    const hint = panel.getElementById<UIKit.Text>('ammo-hint');
     if (value == null) {
       return;
     }
     this.ammoValue = value;
-    this.ammoHint = hint ?? null;
+    this.ammoHint = panel.getElementById<UIKit.Text>('ammo-hint') ?? null;
     this.ammoAlert = panel.getElementById<UIKit.Text>('ammo-alert') ?? null;
+    this.modeUnlimited =
+      panel.getElementById<UIKit.Text>('mode-unlimited') ?? null;
+    this.modeReloading =
+      panel.getElementById<UIKit.Text>('mode-reloading') ?? null;
+    this.sizeRow = panel.getElementById<UIKit.Text>('mag-size-row') ?? null;
+    this.sizeValue =
+      panel.getElementById<UIKit.Text>('mag-size-value') ?? null;
     value.name = 'AmmoValue';
-    if (hint != null) hint.name = 'AmmoHint';
+    if (this.ammoHint != null) this.ammoHint.name = 'AmmoHint';
     if (this.ammoAlert != null) this.ammoAlert.name = 'AmmoAlert';
     this.lastAmmoSignature = '';
+
+    const setMode = (mode: string) => {
+      this.gameEntity()?.setValue(RangeGame, 'ammoMode', mode);
+    };
+    const stepSize = (step: number) => {
+      const game = this.gameEntity();
+      if (game == null) {
+        return;
+      }
+      const size = game.getValue(RangeGame, 'magazineSize') ?? 8;
+      game.setValue(
+        RangeGame,
+        'magazineSize',
+        Math.min(MAGAZINE_MAX, Math.max(MAGAZINE_MIN, size + step)),
+      );
+    };
+
+    const unlimited = () => setMode(AmmoMode.Unlimited);
+    const reloading = () => setMode(AmmoMode.Reloading);
+    const smaller = () => stepSize(-1);
+    const larger = () => stepSize(1);
+    this.modeUnlimited?.addEventListener('click', unlimited);
+    this.modeReloading?.addEventListener('click', reloading);
+    panel.getElementById('mag-minus')?.addEventListener('click', smaller);
+    panel.getElementById('mag-plus')?.addEventListener('click', larger);
+    this.cleanupFuncs.push(
+      () => this.modeUnlimited?.removeEventListener('click', unlimited),
+      () => this.modeReloading?.removeEventListener('click', reloading),
+      () => panel.getElementById('mag-minus')?.removeEventListener('click', smaller),
+      () => panel.getElementById('mag-plus')?.removeEventListener('click', larger),
+    );
+
     this.ammoConnected = true;
   }
 
