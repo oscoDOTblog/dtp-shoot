@@ -15,6 +15,12 @@ import { createTarget } from './scene-assets/target.scene-asset.js';
 const publicAssetUrl = (filePath: string): string =>
   `${import.meta.env.BASE_URL}${filePath.replace(/^\/+/u, '')}`;
 
+const audio = (filePath: string, priority: 'background' | 'critical') => ({
+  url: publicAssetUrl(filePath),
+  type: AssetType.Audio,
+  priority,
+});
+
 const uikitml = (fileName: string, name: string) => ({
   url: publicAssetUrl(`ui/${fileName}`),
   type: AssetType.UIKitML,
@@ -28,4 +34,5 @@ export default defineAssets({
   'range-bench': createRangeBench(),
   'range-berm': createRangeBerm(),
   'range-hud': uikitml('range-hud.uikitml', 'Range HUD'),
+  'pistol-shot': audio('audio/pistol-shot.wav', 'background'),
 });

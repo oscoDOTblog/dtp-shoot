@@ -6,6 +6,8 @@
  */
 
 import {
+  AudioListener,
+  AudioSource,
   Grabbed,
   GrabSystem,
   InputComponent,
@@ -25,6 +27,9 @@ const RESPAWN_DELAY = 0.5;
 const ACTIVE_TARGETS = 2;
 const SPAWN_INTERVAL = 0.4;
 const MAX_SHOT_DISTANCE = 40;
+const MAX_TRACER_LENGTH = 12;
+/** The pistol's tracer mesh is 3 m long before scaling. */
+const TRACER_UNIT = 3;
 const DEFAULT_STATUS = 'Grab the pistol and pull the trigger';
 const FINISHED_STATUS = 'Round over. Pull the trigger to go again';
 
@@ -51,13 +56,17 @@ export class RangeGameSystem extends createSystem({
   private readonly shotQuaternion = new Quaternion();
   private readonly gunQuaternion = new Quaternion();
   private readonly rayQuaternion = new Quaternion();
+  private readonly tracerMid = new Vector3();
+  private readonly tracerParentQuaternion = new Quaternion();
   private readonly recoilTilt = new Quaternion();
   private readonly xAxis = new Vector3(1, 0, 0);
   private readonly candidates: Object3D[] = [];
+  private audioContext: AudioContext | null = null;
   private spawnTimer = 0;
 
   init(): void {
     this.raycaster.far = MAX_SHOT_DISTANCE;
+    this.bindAudioUnlock();
     this.cleanupFuncs.push(
       this.queries.heldGuns.subscribe('disqualify', (entity) => {
         this.resetGunPose(entity);
@@ -242,10 +251,11 @@ export class RangeGameSystem extends createSystem({
     game.setValue(RangeGame, 'shots', shots + 1);
 
     if (gun != null && runtime != null) {
+      this.playShot(gun);
       gun.setValue(Gun, 'cooldown', gun.getValue(Gun, 'fireInterval') ?? 0.16);
       gun.setValue(Gun, 'recoil', 1);
       gun.setValue(Gun, 'flashTime', 0.055);
-      gun.setValue(Gun, 'tracerTime', 0.05);
+      gun.setValue(Gun, 'tracerTime', 0.035);
       if (runtime.flash != null) {
         runtime.flash.visible = true;
       }
@@ -277,12 +287,8 @@ export class RangeGameSystem extends createSystem({
       }
     }
 
-    if (runtime?.tracer != null && runtime.muzzle != null) {
-      const tracer = runtime.tracer;
-      tracer.scale.z = distance / 3;
-      tracer.position.x = runtime.muzzle.position.x;
-      tracer.position.y = runtime.muzzle.position.y;
-      tracer.position.z = runtime.muzzle.position.z - distance / 2;
+    if (gun != null && runtime != null) {
+      this.placeTracer(gun, runtime, distance);
     }
 
     if (hitEntity == null) {
@@ -297,6 +303,75 @@ export class RangeGameSystem extends createSystem({
     game.setValue(RangeGame, 'lastHitPoints', points);
     game.setValue(RangeGame, 'hitPulse', 0.9);
     game.setValue(RangeGame, 'status', `+${points}`);
+  }
+
+  /**
+   * Plays the shot through the pistol's positional AudioSource. Browsers start
+   * the listener's AudioContext suspended until a user gesture, and the shot
+   * itself is that gesture, so resume it here before requesting playback.
+   */
+  private playShot(gun: Entity): void {
+    this.resumeAudio();
+    gun.setValue(AudioSource, '_playRequested', true);
+  }
+
+  /** The shot itself counts as the gesture that unlocks audio playback. */
+  private resumeAudio(): void {
+    const context = this.audioContext ?? this.findAudioContext();
+    this.audioContext = context;
+    if (context != null && context.state === 'suspended') {
+      void context.resume();
+    }
+  }
+
+  private findAudioContext(): AudioContext | null {
+    const listener = this.player.head.children.find(
+      (child): child is AudioListener => child instanceof AudioListener,
+    );
+    return listener?.context ?? null;
+  }
+
+  /**
+   * Pointer and key events unlock the listener's AudioContext for players who
+   * shoot before entering a session (flat mode) or reach for the panel first.
+   */
+  private bindAudioUnlock(): void {
+    const resume = () => this.resumeAudio();
+    document.addEventListener('pointerdown', resume);
+    window.addEventListener('keydown', resume);
+    this.cleanupFuncs.push(
+      () => document.removeEventListener('pointerdown', resume),
+      () => window.removeEventListener('keydown', resume),
+    );
+  }
+
+  /**
+   * Draws the tracer on the shot ray itself, in the pistol's local space. It
+   * deliberately ignores the recoil pose so the line cannot flick upward after
+   * the shot.
+   */
+  private placeTracer(gun: Entity, runtime: GunRuntime, distance: number): void {
+    const gunObject = gun.object3D;
+    const tracer = runtime.tracer;
+    if (gunObject == null || tracer == null) {
+      return;
+    }
+
+    const length = Math.min(distance, MAX_TRACER_LENGTH);
+    this.tracerMid
+      .copy(this.shotDirection)
+      .multiplyScalar(length * 0.5)
+      .add(this.shotOrigin);
+    gunObject.worldToLocal(this.tracerMid);
+    gunObject.getWorldQuaternion(this.tracerParentQuaternion);
+
+    tracer.position.copy(this.tracerMid);
+    tracer.quaternion
+      .copy(this.tracerParentQuaternion)
+      .invert()
+      .multiply(this.shotQuaternion);
+    tracer.scale.set(1, 1, length / TRACER_UNIT);
+    tracer.visible = true;
   }
 
   /** Walks up from a hit mesh until it reaches one of the candidate heads. */

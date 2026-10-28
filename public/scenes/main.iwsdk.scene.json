@@ -132,6 +132,16 @@
           "recoil": 0,
           "flashTime": 0,
           "tracerTime": 0
+        },
+        "AudioSource": {
+          "src": "pistol-shot",
+          "volume": 0.55,
+          "loop": false,
+          "autoplay": false,
+          "positional": true,
+          "refDistance": 0.8,
+          "maxDistance": 20,
+          "maxInstances": 4
         }
       }
     },
@@ -200,9 +210,9 @@
       "name": "Range HUD",
       "content": { "type": "asset", "asset": "range-hud" },
       "transform": {
-        "position": [-0.74, 1.28, -1.9],
-        "rotationDeg": [-3, 21, 0],
-        "scale": 0.24
+        "position": [-0.82, 2.0, -1.9],
+        "rotationDeg": [12, 24, 0],
+        "scale": 0.22
       },
       "components": {
         "RayInteractable": {}

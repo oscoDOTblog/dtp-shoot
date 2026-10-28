@@ -359,9 +359,12 @@ export function createPistol(): Object3D {
   flashCone.rotation.x = -Math.PI / 2;
   addMesh(flash, new SphereGeometry(0.017, 10, 8), materials.flash, [0, 0, 0]);
 
+  // The tracer hangs off the pistol root, not the recoil group: recoil rotates
+  // the barrel for a few frames, and a line that inherits that kick visibly
+  // flicks upward. The shooting system places it along the actual shot ray.
   const tracer = addMesh(
-    recoil,
-    new BoxGeometry(0.0035, 0.0035, 3),
+    root,
+    new BoxGeometry(0.0028, 0.0028, 3),
     materials.flash,
     [0, MUZZLE_Y, MUZZLE_Z - 1.48],
   );
