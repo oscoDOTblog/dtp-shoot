@@ -37,9 +37,7 @@
       }
     },
     "features": {
-      "locomotion": {
-        "useWorker": true
-      },
+      "locomotion": false,
       "grabbing": true,
       "physics": false,
       "sceneUnderstanding": false,

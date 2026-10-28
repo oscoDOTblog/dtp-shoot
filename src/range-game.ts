@@ -35,9 +35,11 @@ const MAG_RESPAWN_DELAY = 1.2;
 /** How close a held magazine has to get to the grip well to seat. */
 const MAG_INSERT_RADIUS = 0.18;
 /** Rearward travel of the free hand that counts as racking the slide. */
-const RACK_DISTANCE = 0.026;
+const RACK_DISTANCE = 0.055;
 /** How far the slide sits back while it is locked open on an empty mag. */
-const SLIDE_LOCK_BACK = 0.015;
+const SLIDE_LOCK_BACK = 0.02;
+/** Slide travel per unit of hand pull, so the gesture reads at arm's length. */
+const SLIDE_PULL_RATIO = 0.55;
 const DEFAULT_STATUS = 'Grab the pistol and pull the trigger';
 const EMPTY_STATUS = 'Out of ammo. Press A to drop the magazine';
 const NO_MAG_STATUS = 'Magazine out. Grab a spare and press it into the grip';
@@ -53,7 +55,7 @@ type GunRuntime = {
   tracer: Object3D | null;
   correction: Quaternion;
 };
-type RackRuntime = { tracking: boolean; startZ: number; pull: number };
+type RackRuntime = { tracking: boolean; minZ: number; pull: number };
 type MagRuntime = {
   home: Vector3;
   homeQuaternion: Quaternion;
@@ -484,7 +486,7 @@ export class RangeGameSystem extends createSystem({
 
     let state = this.rackRuntime.get(gun.index);
     if (state == null) {
-      state = { tracking: false, startZ: 0, pull: 0 };
+      state = { tracking: false, minZ: 0, pull: 0 };
       this.rackRuntime.set(gun.index, state);
     }
 
@@ -506,16 +508,19 @@ export class RangeGameSystem extends createSystem({
       this.handLocal.copy(frame.worldToLocal(this.handWorld));
       const onSlide =
         this.handLocal.y > -0.02 &&
-        this.handLocal.y < 0.12 &&
-        Math.abs(this.handLocal.x) < 0.12 &&
-        this.handLocal.z > -0.21 &&
-        this.handLocal.z < 0.12;
+        this.handLocal.y < 0.13 &&
+        Math.abs(this.handLocal.x) < 0.13 &&
+        this.handLocal.z > -0.22 &&
+        this.handLocal.z < 0.2;
       if (onSlide) {
         if (!state.tracking) {
           state.tracking = true;
-          state.startZ = this.handLocal.z;
+          state.minZ = this.handLocal.z;
         }
-        state.pull = Math.max(0, this.handLocal.z - state.startZ);
+        // Measure from the most forward point the hand reaches on the slide,
+        // so entering the zone from the rear still allows a full pull.
+        state.minZ = Math.min(state.minZ, this.handLocal.z);
+        state.pull = Math.max(0, this.handLocal.z - state.minZ);
         if (state.pull >= RACK_DISTANCE) {
           state.tracking = false;
           state.pull = 0;
@@ -523,14 +528,20 @@ export class RangeGameSystem extends createSystem({
         }
       } else {
         state.tracking = false;
+        state.pull = 0;
       }
     } else {
       state.tracking = false;
+      state.pull = 0;
     }
 
     const locked = gun.getValue(Gun, 'needsRack') === true;
+    const pull = locked ? Math.min(state.pull, RACK_DISTANCE) : 0;
+    if (Math.abs((gun.getValue(Gun, 'rackPull') ?? 0) - pull) > 0.001) {
+      gun.setValue(Gun, 'rackPull', pull);
+    }
     const reach = locked
-      ? SLIDE_LOCK_BACK + Math.min(state.pull, RACK_DISTANCE)
+      ? SLIDE_LOCK_BACK + pull * SLIDE_PULL_RATIO
       : 0;
     slide.position.z += (reach - slide.position.z) * Math.min(1, delta * 20);
   }
@@ -684,6 +695,7 @@ export class RangeGameSystem extends createSystem({
       gun.setValue(Gun, 'ammo', gun.getValue(Gun, 'magazineSize') ?? 6);
       gun.setValue(Gun, 'magIn', true);
       gun.setValue(Gun, 'needsRack', false);
+      gun.setValue(Gun, 'rackPull', 0);
       const runtime = this.rackRuntime.get(gun.index);
       if (runtime != null) {
         runtime.tracking = false;

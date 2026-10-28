@@ -39,6 +39,7 @@ export const Gun = createComponent('Gun', {
   magazineSize: { type: Types.Int32, default: 6, min: 1, step: 1 },
   magIn: { type: Types.Boolean, default: true, label: 'Magazine seated' },
   needsRack: { type: Types.Boolean, default: false, label: 'Slide locked back' },
+  rackPull: { type: Types.Float32, default: 0, label: 'Slide pull (m)' },
 });
 
 /** A spare magazine resting on the bench. */
