@@ -213,6 +213,25 @@
       }
     },
     {
+      "id": "dropped-magazine",
+      "name": "Dropped Magazine",
+      "content": { "type": "asset", "asset": "magazine", "castShadow": true },
+      "transform": { "position": [0.28, 0.84, -0.9] },
+      "metadata": {
+        "iwsdk.validation": { "allowFloating": true }
+      },
+      "components": {
+        "AudioSource": {
+          "src": "pistol-magout",
+          "volume": 0.6,
+          "loop": false,
+          "autoplay": false,
+          "positional": false,
+          "maxInstances": 2
+        }
+      }
+    },
+    {
       "id": "ammo-panel",
       "name": "Ammo Readout",
       "content": { "type": "asset", "asset": "ammo-readout" },

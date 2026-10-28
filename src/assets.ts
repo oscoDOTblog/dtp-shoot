@@ -40,4 +40,5 @@ export default defineAssets({
   'pistol-shot': audio('audio/pistol-shot.wav', 'background'),
   'pistol-dry': audio('audio/pistol-dry.wav', 'background'),
   'pistol-rack': audio('audio/pistol-rack.wav', 'background'),
+  'pistol-magout': audio('audio/pistol-magout.wav', 'background'),
 });

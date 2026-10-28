@@ -40,10 +40,24 @@ const RACK_DISTANCE = 0.055;
 const SLIDE_LOCK_BACK = 0.02;
 /** Slide travel per unit of hand pull, so the gesture reads at arm's length. */
 const SLIDE_PULL_RATIO = 0.55;
+/** Squeeze needed on the free hand before the slide can be racked. */
+const GRAB_THRESHOLD = 0.5;
+/** Seconds an ejected magazine spends falling, settling, then disappearing. */
+const MAG_DROP_LIFETIME = 3.0;
+/** Floor height the dropped magazine lands on. */
+const MAG_DROP_FLOOR = 0.002;
+/** Bench top: a magazine ejected over the table lands on it, not under it. */
+const BENCH_TOP = 0.932;
+const BENCH_MIN_X = -0.74;
+const BENCH_MAX_X = 0.74;
+const BENCH_MIN_Z = -1.34;
+const BENCH_MAX_Z = -0.56;
+/** Spark of spin on a dropped magazine, in radians per second. */
+const MAG_DROP_SPIN = 7.2;
 const DEFAULT_STATUS = 'Grab the pistol and pull the trigger';
 const EMPTY_STATUS = 'Out of ammo. Press A to drop the magazine';
 const NO_MAG_STATUS = 'Magazine out. Grab a spare and press it into the grip';
-const RACK_STATUS = 'Rack the slide to chamber a round';
+const RACK_STATUS = 'Grab the slide with your free hand and pull it back';
 const FINISHED_STATUS = 'Round over. Pull the trigger to go again';
 
 type TargetRuntime = { arm: Object3D | null; head: Object3D | null };
@@ -59,8 +73,17 @@ type RackRuntime = { tracking: boolean; minZ: number; pull: number };
 type MagRuntime = {
   home: Vector3;
   homeQuaternion: Quaternion;
+  parent: Object3D | null;
   rounds: Object3D | null;
   captured: boolean;
+};
+type DropRuntime = {
+  active: boolean;
+  age: number;
+  velocityY: number;
+  spin: number;
+  groundY: number;
+  resting: boolean;
 };
 
 export class RangeGameSystem extends createSystem({
@@ -90,13 +113,29 @@ export class RangeGameSystem extends createSystem({
   private readonly rackRuntime = new Map<number, RackRuntime>();
   private readonly xAxis = new Vector3(1, 0, 0);
   private readonly candidates: Object3D[] = [];
+  private readonly dropPosition = new Vector3();
+  private readonly dropQuaternion = new Quaternion();
+  private readonly dropRuntime: DropRuntime = {
+    active: false,
+    age: 0,
+    velocityY: 0,
+    spin: 0,
+    groundY: MAG_DROP_FLOOR,
+    resting: false,
+  };
   private audioContext: AudioContext | null = null;
   private gunMech: Entity | null = null;
+  private droppedMagazine: Entity | null = null;
+  private dropResolved = false;
+  private dropCount = 0;
   private spawnTimer = 0;
 
   init(): void {
     this.raycaster.far = MAX_SHOT_DISTANCE;
     this.bindAudioUnlock();
+    for (const magazine of this.queries.magazines.entities) {
+      this.captureMagazineHome(magazine);
+    }
     this.cleanupFuncs.push(
       this.queries.heldGuns.subscribe('disqualify', (entity) => {
         this.resetGunPose(entity);
@@ -121,6 +160,7 @@ export class RangeGameSystem extends createSystem({
     this.updateTargets(game, delta);
     this.updateReload(game, delta);
     this.updateGunFeedback(delta);
+    this.updateDroppedMagazine(delta);
   }
 
   private gameEntity(): Entity | null {
@@ -141,6 +181,9 @@ export class RangeGameSystem extends createSystem({
     game.setValue(RangeGame, 'lastHitPoints', 0);
     game.setValue(RangeGame, 'status', DEFAULT_STATUS);
     this.spawnTimer = 0;
+    this.dropRuntime.active = false;
+    this.dropRuntime.age = 0;
+    this.dropRuntime.resting = false;
     this.refillGuns();
     this.restoreMagazines();
     for (const target of this.queries.targets.entities) {
@@ -461,8 +504,112 @@ export class RangeGameSystem extends createSystem({
     }
     gun.setValue(Gun, 'magIn', false);
     gun.setValue(Gun, 'ammo', 0);
-    this.playDry(game);
+    this.dropMagazine(gun);
+    this.playMagOut();
     game.setValue(RangeGame, 'status', NO_MAG_STATUS);
+  }
+
+  /** Hooks the visual magazine that drops from the well when it is ejected. */
+  private droppedMagazineEntity(): Entity | null {
+    if (!this.dropResolved) {
+      this.droppedMagazine = this.world.getSceneEntity('dropped-magazine') ?? null;
+      this.dropResolved = this.droppedMagazine != null;
+    }
+    return this.droppedMagazine;
+  }
+
+  /**
+   * Sends the ejected magazine out of the grip: it starts where the floorplate
+   * sat, then falls and tumbles onto the bench (or the floor beyond it) before
+   * being hidden. It is a purely visual prop with no grabbable or collider
+   * components.
+   */
+  private dropMagazine(gun: Entity): void {
+    const entity = this.droppedMagazineEntity();
+    const object = entity?.object3D;
+    const gunObject = gun.object3D;
+    if (object == null || gunObject == null) {
+      return;
+    }
+    // The visible pistol is the recoil group, so place the magazine there.
+    const runtime = this.gunState(gun, gunObject);
+    const frame = runtime.recoil ?? gunObject;
+    frame.updateWorldMatrix(true, false);
+    this.dropPosition.set(0, -0.1, 0.006);
+    frame.localToWorld(this.dropPosition);
+    frame.getWorldQuaternion(this.dropQuaternion);
+
+    object.position.copy(this.dropPosition);
+    object.quaternion.copy(this.dropQuaternion);
+    object.visible = true;
+
+    this.dropCount += 1;
+    const drop = this.dropRuntime;
+    drop.active = true;
+    drop.age = 0;
+    drop.velocityY = -0.2;
+    // Alternate the direction so repeated drops do not look identical.
+    drop.spin = (this.dropCount % 2 === 0 ? -1 : 1) * MAG_DROP_SPIN;
+    drop.groundY = this.dropGround(object.position.x, object.position.z);
+    if (object.position.y < drop.groundY) {
+      // A magazine released below the table top falls past it to the floor.
+      drop.groundY = MAG_DROP_FLOOR;
+    }
+    drop.resting = false;
+  }
+
+  /** What a dropped magazine lands on: the table if over it, else the floor. */
+  private dropGround(x: number, z: number): number {
+    const onBench =
+      x > BENCH_MIN_X && x < BENCH_MAX_X && z > BENCH_MIN_Z && z < BENCH_MAX_Z;
+    return onBench ? BENCH_TOP : MAG_DROP_FLOOR;
+  }
+
+  /** Advances the ejected magazine's short fall, bounce and cleanup. */
+  private updateDroppedMagazine(delta: number): void {
+    const entity = this.droppedMagazineEntity();
+    const object = entity?.object3D;
+    if (object == null) {
+      return;
+    }
+    const drop = this.dropRuntime;
+    if (!drop.active) {
+      // The prop is authored in the scene, so keep it parked out of sight.
+      if (object.visible) {
+        object.visible = false;
+      }
+      return;
+    }
+
+    drop.age += delta;
+    if (!drop.resting) {
+      drop.velocityY -= 9.81 * delta;
+      object.position.y += drop.velocityY * delta;
+      object.rotateX(drop.spin * delta);
+      object.rotateZ(drop.spin * 0.3 * delta);
+      if (object.position.y <= drop.groundY) {
+        object.position.y = drop.groundY;
+        if (drop.velocityY < -1.4) {
+          drop.velocityY = -drop.velocityY * 0.3;
+          drop.spin *= -0.4;
+        } else {
+          drop.resting = true;
+          drop.velocityY = 0;
+          drop.spin = 0;
+        }
+      }
+    }
+
+    if (drop.age >= MAG_DROP_LIFETIME) {
+      drop.active = false;
+      drop.resting = false;
+      object.visible = false;
+    }
+  }
+
+  private playMagOut(): void {
+    this.resumeAudio();
+    this.droppedMagazineEntity()?.setValue(AudioSource, '_playRequested', true);
   }
 
   /**
@@ -498,10 +645,13 @@ export class RangeGameSystem extends createSystem({
       this.world.getSystem(GrabSystem)?.getHolderHand(gun) ?? null;
 
     if (rackable && holder != null) {
-      const hand =
-        holder === 'left'
-          ? this.player.gripSpaces.right
-          : this.player.gripSpaces.left;
+      const freeHand = holder === 'left' ? 'right' : 'left';
+      const hand = this.player.gripSpaces[freeHand];
+      // Racking is a grab, not a brush: the free hand has to be squeezed.
+      const squeezing =
+        (this.input.xr.gamepads[freeHand]?.getButtonValue(
+          InputComponent.Squeeze,
+        ) ?? 0) > GRAB_THRESHOLD;
       gunObject.updateWorldMatrix(true, false);
       frame.updateWorldMatrix(true, false);
       hand.getWorldPosition(this.handWorld);
@@ -512,7 +662,7 @@ export class RangeGameSystem extends createSystem({
         Math.abs(this.handLocal.x) < 0.13 &&
         this.handLocal.z > -0.22 &&
         this.handLocal.z < 0.2;
-      if (onSlide) {
+      if (onSlide && squeezing) {
         if (!state.tracking) {
           state.tracking = true;
           state.minZ = this.handLocal.z;
@@ -527,6 +677,7 @@ export class RangeGameSystem extends createSystem({
           this.completeRack(game, gun);
         }
       } else {
+        // Letting go of the squeeze drops the slide back to its locked stop.
         state.tracking = false;
         state.pull = 0;
       }
@@ -568,6 +719,17 @@ export class RangeGameSystem extends createSystem({
    */
   private updateReload(game: Entity, delta: number): void {
     for (const magazine of this.queries.magazines.entities) {
+      const state = this.magState(magazine);
+      // Prove where a magazine belongs while it is still sitting untouched on
+      // the bench. Capturing it later, mid-grab, recorded a midair pose and
+      // respawned the magazine in the hand's last position.
+      if (
+        !state.captured &&
+        magazine.getValue(Magazine, 'ready') !== false &&
+        this.world.getSystem(GrabSystem)?.getHolderHand(magazine) == null
+      ) {
+        this.captureMagazineHome(magazine);
+      }
       if (magazine.getValue(Magazine, 'ready') !== false) {
         continue;
       }
@@ -640,6 +802,9 @@ export class RangeGameSystem extends createSystem({
     magazine.setValue(Magazine, 'ready', false);
     magazine.setValue(Magazine, 'respawn', MAG_RESPAWN_DELAY);
     const state = this.magState(magazine);
+    if (state.rounds == null) {
+      state.rounds = magazine.object3D?.getObjectByName('Rounds') ?? null;
+    }
     if (state.rounds != null) {
       state.rounds.visible = false;
     }
@@ -662,6 +827,9 @@ export class RangeGameSystem extends createSystem({
 
   private restoreMagazine(magazine: Entity): void {
     const state = this.magState(magazine);
+    if (!state.captured) {
+      this.captureMagazineHome(magazine);
+    }
     magazine.setValue(Magazine, 'ready', true);
     magazine.setValue(Magazine, 'respawn', 0);
     if (state.rounds != null) {
@@ -679,6 +847,11 @@ export class RangeGameSystem extends createSystem({
     }
     if (!state.captured) {
       return;
+    }
+    // Grabbing reparents the object onto the hand's scene root, so put it back
+    // under its authored parent before restoring the bench-local pose.
+    if (state.parent != null && object.parent !== state.parent) {
+      state.parent.attach(object);
     }
     object.position.copy(state.home);
     object.quaternion.copy(state.homeQuaternion);
@@ -710,19 +883,27 @@ export class RangeGameSystem extends createSystem({
       runtime = {
         home: new Vector3(),
         homeQuaternion: new Quaternion(),
+        parent: null,
         rounds: null,
         captured: false,
       };
       this.magRuntime.set(magazine.index, runtime);
     }
-    const object = magazine.object3D;
-    if (!runtime.captured && object != null) {
-      runtime.home.copy(object.position);
-      runtime.homeQuaternion.copy(object.quaternion);
-      runtime.rounds = object.getObjectByName('Rounds') ?? null;
-      runtime.captured = true;
-    }
     return runtime;
+  }
+
+  /** Records a magazine's bench pose while it is still where it belongs. */
+  private captureMagazineHome(magazine: Entity): void {
+    const state = this.magState(magazine);
+    const object = magazine.object3D;
+    if (object == null) {
+      return;
+    }
+    state.home.copy(object.position);
+    state.homeQuaternion.copy(object.quaternion);
+    state.parent = object.parent;
+    state.rounds = object.getObjectByName('Rounds') ?? null;
+    state.captured = true;
   }
 
   /**
