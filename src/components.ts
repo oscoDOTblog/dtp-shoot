@@ -6,6 +6,6 @@
  */
 
 import { defineComponents } from '@iwsdk/core';
-import { Robot } from './robot-component.js';
+import { Gun, RangeGame, Target } from './range-components.js';
 
-export default defineComponents([Robot]);
+export default defineComponents([Target, Gun, RangeGame]);

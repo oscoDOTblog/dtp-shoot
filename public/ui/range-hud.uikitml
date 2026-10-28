@@ -1,0 +1,126 @@
+<!--
+  DTP Shoot range HUD. Authored near the scaffold panel scale and placed at
+  ~0.27 node scale, so the Horizon button metrics stay proportional.
+  Dark scheme at runtime, light in editor previews, so text colors have :dark.
+-->
+<style>
+  .hud-root {
+    flex-direction: column;
+    width: 196;
+    padding-top: 10;
+    padding-bottom: 10;
+    padding-left: 11;
+    padding-right: 11;
+  }
+
+  .stat-row {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+
+  .stat {
+    flex-direction: column;
+    gap: 2;
+  }
+
+  .stat-end {
+    align-items: flex-end;
+  }
+
+  .stat-label {
+    color: #6b5a00;
+    font-size: 7.5;
+    font-weight: 700;
+    letter-spacing: 0.55;
+  }
+
+  .stat-label:dark {
+    color: #f5d90a;
+  }
+
+  .value-left {
+    color: #1c1d20;
+    font-size: 27;
+    font-weight: 700;
+    line-height: 1;
+    text-align: left;
+  }
+
+  .value-left:dark {
+    color: #fafaf7;
+  }
+
+  .value-right {
+    color: #1c1d20;
+    font-size: 27;
+    font-weight: 700;
+    line-height: 1;
+    text-align: right;
+  }
+
+  .value-right:dark {
+    color: #fafaf7;
+  }
+
+  .divider {
+    height: 0.5;
+    margin-top: 7;
+    margin-bottom: 7;
+    background-color: #d9d4c8;
+  }
+
+  .divider:dark {
+    background-color: #3a3b40;
+  }
+
+  .status {
+    color: #1c1d20;
+    font-size: 11;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  .status:dark {
+    color: #f2f2ee;
+  }
+
+  .stats {
+    margin-top: 3;
+    color: #4a4b50;
+    font-size: 8;
+    line-height: 1.3;
+  }
+
+  .stats:dark {
+    color: #b9bcc4;
+  }
+
+  .action {
+    margin-top: 8;
+  }
+</style>
+<Panel class="hud-root">
+  <div class="stat-row">
+    <div class="stat">
+      <span class="stat-label">SCORE</span>
+      <span id="score-value" class="value-left">0</span>
+    </div>
+    <div class="stat stat-end">
+      <span class="stat-label">TIME</span>
+      <span id="time-value" class="value-right">60</span>
+    </div>
+  </div>
+  <div class="divider"></div>
+  <span id="status-text" class="status">Grab the pistol and pull the trigger</span>
+  <span id="stats-text" class="stats">HITS 0 / 0 - 0%</span>
+  <Button id="play-again" class="action" style="display: none">
+    <ButtonLabel>Play Again</ButtonLabel>
+  </Button>
+  <Button id="xr-button" class="action">
+    <ButtonLabel>Enter VR</ButtonLabel>
+  </Button>
+  <Button id="exit-button" class="action" style="display: none">
+    <ButtonLabel>Exit VR</ButtonLabel>
+  </Button>
+</Panel>
