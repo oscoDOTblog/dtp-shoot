@@ -144,7 +144,6 @@
           "kind": "Pistol",
           "automatic": false,
           "fireInterval": 0.16,
-          "recoil": 0,
           "flashTime": 0,
           "tracerTime": 0,
           "ammo": 8,
@@ -191,9 +190,7 @@
         "Gun": {
           "kind": "SMG",
           "automatic": true,
-          "twoHanded": true,
           "fireInterval": 0.085,
-          "recoil": 0,
           "flashTime": 0,
           "tracerTime": 0,
           "ammo": 30,

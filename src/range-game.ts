@@ -11,7 +11,6 @@ import {
   Grabbed,
   GrabSystem,
   InputComponent,
-  Matrix4,
   Mesh,
   Quaternion,
   Raycaster,
@@ -53,12 +52,6 @@ const RACK_DISTANCE = 0.055;
 const SLIDE_PULL_RATIO = 0.55;
 /** Squeeze needed on the free hand before the slide can be racked. */
 const GRAB_THRESHOLD = 0.5;
-/** Distance from the held SMG at which the free hand counts as support. */
-const SMG_SUPPORT_RADIUS = 0.22;
-/** One-handed SMG kick is intentionally hard to keep on target. */
-const SMG_ONE_HAND_RECOIL_TILT = 0.72;
-const SMG_ONE_HAND_RECOIL_PUSH = 0.09;
-const SMG_ONE_HAND_RECOIL_DECAY = 4.0;
 /** How far below its bench pose an inactive weapon waits, out of grab range. */
 const PARKED_OFFSET = 5;
 /** Seconds an ejected magazine spends falling, settling, then disappearing. */
@@ -89,7 +82,6 @@ type TargetRuntime = { arm: Object3D | null; head: Object3D | null };
 type GunRuntime = {
   recoil: Object3D | null;
   gripPoint: Object3D | null;
-  supportPoint: Object3D | null;
   slide: Object3D | null;
   muzzle: Object3D | null;
   flash: Object3D | null;
@@ -150,29 +142,14 @@ export class RangeGameSystem extends createSystem({
   private readonly rayQuaternion = new Quaternion();
   private readonly tracerMid = new Vector3();
   private readonly tracerParentQuaternion = new Quaternion();
-  private readonly recoilTilt = new Quaternion();
   private readonly insertPoint = new Vector3();
   private readonly magPosition = new Vector3();
   private readonly handWorld = new Vector3();
   private readonly handLocal = new Vector3();
   private readonly gunWorld = new Vector3();
   private readonly gripWorld = new Vector3();
-  private readonly supportWorld = new Vector3();
   private readonly rootWorldTarget = new Vector3();
-  private readonly localForward = new Vector3(0, 0, -1);
-  private readonly localGrip = new Vector3();
-  private readonly localHandDirection = new Vector3();
-  private readonly localUp = new Vector3();
-  private readonly localRight = new Vector3();
-  private readonly worldUp = new Vector3();
-  private readonly worldRight = new Vector3();
-  private readonly desiredQuaternion = new Quaternion();
-  private readonly parentQuaternion = new Quaternion();
-  private readonly localBasis = new Matrix4();
-  private readonly worldBasis = new Matrix4();
-  private readonly localBasisInverse = new Matrix4();
   private readonly rackRuntime = new Map<number, RackRuntime>();
-  private readonly xAxis = new Vector3(1, 0, 0);
   private readonly candidates: Object3D[] = [];
   private readonly dropPosition = new Vector3();
   private readonly dropQuaternion = new Quaternion();
@@ -557,11 +534,25 @@ export class RangeGameSystem extends createSystem({
     const runtime = this.gunState(gun, gunObject);
 
     gunObject.updateWorldMatrix(true, false);
-    // The muzzle carries the corrected barrel orientation, so aim through it
-    // rather than through the grabbed root.
+    // Fire from the muzzle position, but along the holder's target ray. The
+    // snapped gun model derives its orientation from that same ray through a
+    // correction quaternion, so reading the shot back off the muzzle made the
+    // hitscan depend on that pose solve; the ray itself is the aim the player
+    // is pointing, and it cannot be skewed by grip snapping or pose order.
     const aim = runtime.muzzle ?? gunObject;
     aim.getWorldPosition(this.shotOrigin);
-    aim.getWorldQuaternion(this.shotQuaternion);
+    const hand = this.world.getSystem(GrabSystem)?.getHolderHand(gun) ?? null;
+    if (hand != null) {
+      const ray =
+        hand === 'left' ? this.player.raySpaces.left : this.player.raySpaces.right;
+      // Keep the physical shot at the snapped muzzle, but use the controller
+      // target ray for aim. Grip snapping changes the weapon's pose relative
+      // to the controller; mixing the snapped muzzle direction with the
+      // controller's aim is what caused shots to miss after snapping.
+      ray.getWorldQuaternion(this.shotQuaternion);
+    } else {
+      aim.getWorldQuaternion(this.shotQuaternion);
+    }
     this.shotDirection.set(0, 0, -1).applyQuaternion(this.shotQuaternion);
     this.raycaster.set(this.shotOrigin, this.shotDirection);
 
@@ -596,7 +587,6 @@ export class RangeGameSystem extends createSystem({
     if (gun != null && runtime != null) {
       this.playShot(gun);
       gun.setValue(Gun, 'cooldown', gun.getValue(Gun, 'fireInterval') ?? 0.16);
-      gun.setValue(Gun, 'recoil', 1);
       gun.setValue(Gun, 'flashTime', 0.055);
       gun.setValue(Gun, 'tracerTime', 0.035);
       if (!this.isUnlimited(game)) {
@@ -1484,26 +1474,10 @@ export class RangeGameSystem extends createSystem({
       this.alignGunToRay(hand, gunObject, runtime);
     }
 
-    const oneHandedSmg =
-      gun.getValue(Gun, 'twoHanded') === true &&
-      gun.getValue(Gun, 'kind') === WeaponKind.SMG &&
-      !this.hasSupportHand(hand, runtime);
-    const recoilDecay = oneHandedSmg ? SMG_ONE_HAND_RECOIL_DECAY : 6.5;
-    const recoil = Math.max(
-      0,
-      (gun.getValue(Gun, 'recoil') ?? 0) - delta * recoilDecay,
-    );
-    if (recoil !== (gun.getValue(Gun, 'recoil') ?? 0)) {
-      gun.setValue(Gun, 'recoil', recoil);
-    }
+    // The recoil group carries only the ray correction now: no kick.
     if (runtime.recoil != null) {
-      const tilt = oneHandedSmg ? SMG_ONE_HAND_RECOIL_TILT : 0.24;
-      const push = oneHandedSmg ? SMG_ONE_HAND_RECOIL_PUSH : 0.035;
-      this.recoilTilt.setFromAxisAngle(this.xAxis, recoil * tilt);
-      runtime.recoil.quaternion
-        .copy(runtime.correction)
-        .multiply(this.recoilTilt);
-      runtime.recoil.position.z = recoil * push;
+      runtime.recoil.quaternion.copy(runtime.correction);
+      runtime.recoil.position.set(0, 0, 0);
     }
 
     const flashTime = Math.max(0, (gun.getValue(Gun, 'flashTime') ?? 0) - delta);
@@ -1521,31 +1495,6 @@ export class RangeGameSystem extends createSystem({
         runtime.tracer.visible = tracerTime > 0;
       }
     }
-  }
-
-  /**
-   * A support hand must be physically close to the held SMG. This works for
-   * both controllers and hands without competing with the grab system's
-   * single primary holder.
-   */
-  private hasSupportHand(
-    holder: 'left' | 'right' | null,
-    runtime: GunRuntime,
-  ): boolean {
-    if (holder == null || runtime.supportPoint == null) {
-      return false;
-    }
-    const freeHand = holder === 'left' ? 'right' : 'left';
-    const support = this.player.gripSpaces[freeHand];
-    runtime.supportPoint.getWorldPosition(this.supportWorld);
-    support.getWorldPosition(this.handWorld);
-    if (
-      this.supportWorld.distanceToSquared(this.handWorld) >
-      SMG_SUPPORT_RADIUS * SMG_SUPPORT_RADIUS
-    ) {
-      return false;
-    }
-    return true;
   }
 
   private targetState(target: Entity): TargetRuntime {
@@ -1578,15 +1527,8 @@ export class RangeGameSystem extends createSystem({
     const grip =
       hand === 'left' ? this.player.gripSpaces.left : this.player.gripSpaces.right;
     const holder = hand === 'left' ? 'left' : 'right';
-    const twoHandedSmg =
-      runtime.supportPoint != null &&
-      this.hasSupportHand(holder, runtime);
 
     grip.getWorldPosition(this.handWorld);
-    if (twoHandedSmg && runtime.supportPoint != null) {
-      this.alignTwoHandedSmg(gunObject, runtime);
-      return;
-    }
 
     // Snap the authored grip point onto the primary hand, but leave the
     // controller's target ray responsible for the usable shooting angle.
@@ -1614,67 +1556,6 @@ export class RangeGameSystem extends createSystem({
     runtime.correction.copy(this.gunQuaternion).invert().multiply(this.rayQuaternion);
   }
 
-  /** Aligns both authored SMG hand points to both physical hand positions. */
-  private alignTwoHandedSmg(gunObject: Object3D, runtime: GunRuntime): void {
-    if (runtime.gripPoint == null || runtime.supportPoint == null) {
-      return;
-    }
-    runtime.supportPoint.getWorldPosition(this.supportWorld);
-    this.localHandDirection.copy(this.supportWorld).sub(this.handWorld).normalize();
-
-    this.localForward
-      .copy(runtime.supportPoint.position)
-      .sub(runtime.gripPoint.position)
-      .normalize();
-    this.localUp.set(0, 1, 0);
-    this.localRight.copy(this.localForward).cross(this.localUp).normalize();
-    this.localUp.copy(this.localRight).cross(this.localForward).normalize();
-
-    this.worldUp.set(0, 1, 0);
-    this.worldUp.addScaledVector(
-      this.localHandDirection,
-      -this.worldUp.dot(this.localHandDirection),
-    ).normalize();
-    this.worldRight
-      .copy(this.localHandDirection)
-      .cross(this.worldUp)
-      .normalize();
-    this.worldUp
-      .copy(this.worldRight)
-      .cross(this.localHandDirection)
-      .normalize();
-
-    this.localBasis.makeBasis(this.localRight, this.localUp, this.localForward);
-    this.worldBasis.makeBasis(
-      this.worldRight,
-      this.worldUp,
-      this.localHandDirection,
-    );
-    this.localBasisInverse.copy(this.localBasis).invert();
-    this.desiredQuaternion.setFromRotationMatrix(
-      this.worldBasis.multiply(this.localBasisInverse),
-    );
-
-    this.localGrip.copy(runtime.gripPoint.position);
-    this.rootWorldTarget
-      .copy(this.localGrip)
-      .applyQuaternion(this.desiredQuaternion)
-      .multiplyScalar(-1)
-      .add(this.handWorld);
-    if (gunObject.parent != null) {
-      gunObject.parent.getWorldQuaternion(this.parentQuaternion).invert();
-      gunObject.quaternion
-        .copy(this.parentQuaternion)
-        .multiply(this.desiredQuaternion);
-      gunObject.parent.worldToLocal(this.rootWorldTarget);
-      gunObject.position.copy(this.rootWorldTarget);
-    } else {
-      gunObject.quaternion.copy(this.desiredQuaternion);
-      gunObject.position.copy(this.rootWorldTarget);
-    }
-    runtime.correction.identity();
-  }
-
   private resetGunPose(gun: Entity): void {
     const runtime = this.gunRuntime.get(gun.index);
     if (runtime == null) {
@@ -1693,7 +1574,6 @@ export class RangeGameSystem extends createSystem({
       runtime = {
         recoil: null,
         gripPoint: null,
-        supportPoint: null,
         slide: null,
         muzzle: null,
         flash: null,
@@ -1710,7 +1590,6 @@ export class RangeGameSystem extends createSystem({
     }
     runtime.recoil = runtime.recoil ?? gunObject.getObjectByName('Recoil') ?? null;
     runtime.gripPoint = runtime.gripPoint ?? gunObject.getObjectByName('GripPoint') ?? null;
-    runtime.supportPoint = runtime.supportPoint ?? gunObject.getObjectByName('SupportGrip') ?? null;
     runtime.slide = runtime.slide ?? gunObject.getObjectByName('Slide') ?? null;
     runtime.muzzle = runtime.muzzle ?? gunObject.getObjectByName('Muzzle') ?? null;
     runtime.flash = runtime.flash ?? gunObject.getObjectByName('MuzzleFlash') ?? null;
