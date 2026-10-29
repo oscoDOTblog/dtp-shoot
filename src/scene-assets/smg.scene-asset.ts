@@ -7,7 +7,7 @@
  * which suits a shoulder-fired PDW at arm's length.
  *
  * Named runtime hooks:
- *   Recoil      group that kicks on each shot
+ *   Recoil      stable aim-correction group
  *   Slide       bolt + charging handle; rack and lock-back travel on this group
  *   Muzzle      barrel tip, carries the corrected firing direction
  *   MuzzleFlash / Tracer   hidden effects, excluded from preview framing
@@ -129,22 +129,26 @@ export function createSmg(): Object3D {
   const root = new Group();
   root.name = 'SMG';
 
-  const recoil = new Group();
-  recoil.name = 'Recoil';
-  root.add(recoil);
+  const aimFrame = new Group();
+  aimFrame.name = 'Recoil';
+  root.add(aimFrame);
 
   const gripPoint = new Group();
   gripPoint.name = 'GripPoint';
   gripPoint.position.set(0, -0.045, 0.05);
   root.add(gripPoint);
 
-  const supportGrip = new Group();
-  supportGrip.name = 'SupportGrip';
-  supportGrip.position.set(0, 0.04, -0.245);
-  root.add(supportGrip);
   const body = new Group();
   body.name = 'Body';
-  recoil.add(body);
+  aimFrame.add(body);
+
+  const supportGrip = new Group();
+  supportGrip.name = 'SupportGrip';
+  supportGrip.position.set(0, -0.055, -0.245);
+  // Keep the capture anchor on the stable gun root. The visible foregrip is
+  // under the aim-correction group, but using that moving hierarchy for proximity detection
+  // would make support capture toggle as the weapon rotates.
+  root.add(supportGrip);
 
   // --- receiver ---
   const receiverSurface = LoftSurface.tube([
@@ -245,6 +249,36 @@ export function createSmg(): Object3D {
     materials.gunmetal,
     0.0012,
   ).name = 'LowerRailBase';
+
+  // A pronounced vertical foregrip gives the support hand an obvious squeeze
+  // target. The named SupportGrip sits at its centre and follows the weapon's
+  // aim frame through the handguard hierarchy.
+  const foregrip = new Group();
+  foregrip.name = 'VerticalForegrip';
+  handguard.add(foregrip);
+  addBevelBox(
+    foregrip,
+    [0.042, 0.13, 0.046],
+    [0, -0.057, -0.245],
+    materials.polymer,
+    0.004,
+  ).name = 'ForegripBody';
+  addBevelBox(
+    foregrip,
+    [0.048, 0.012, 0.054],
+    [0, 0.008, -0.245],
+    materials.gunmetal,
+    0.002,
+  ).name = 'ForegripCollar';
+  for (let i = 0; i < 4; i += 1) {
+    addBevelBox(
+      foregrip,
+      [0.044, 0.004, 0.05],
+      [0, -0.018 - i * 0.023, -0.245],
+      materials.gunmetal,
+      0.001,
+    ).name = 'ForegripRib';
+  }
 
   // --- barrel and muzzle device ---
   addMesh(
@@ -516,7 +550,7 @@ export function createSmg(): Object3D {
   // --- bolt and charging handle (the "slide" the rack gesture moves) ---
   const slide = new Group();
   slide.name = 'Slide';
-  recoil.add(slide);
+  aimFrame.add(slide);
 
   addBevelBox(
     slide,
@@ -549,7 +583,7 @@ export function createSmg(): Object3D {
   // Invisible box the free hand must be inside to rack the bolt, sized to the
   // rear receiver top where the charging handle sits.
   const rackZone = addMesh(
-    recoil,
+    aimFrame,
     new BoxGeometry(0.16, 0.13, 0.3),
     materials.marker,
     [-0.008, 0.05, 0.055],
@@ -561,7 +595,7 @@ export function createSmg(): Object3D {
   const muzzle = new Group();
   muzzle.name = 'Muzzle';
   muzzle.position.set(0, MUZZLE_Y, MUZZLE_Z);
-  recoil.add(muzzle);
+  aimFrame.add(muzzle);
 
   const flash = new Group();
   flash.name = 'MuzzleFlash';
@@ -577,8 +611,8 @@ export function createSmg(): Object3D {
   flashCone.rotation.x = -Math.PI / 2;
   addMesh(flash, new SphereGeometry(0.019, 10, 8), materials.flash, [0, 0, 0]);
 
-  // The tracer hangs off the weapon root, not the recoil group, so the shot
-  // line never inherits the upward kick.
+  // The tracer hangs off the weapon root, not the aim frame, so the shot
+  // line never inherits the transient movement.
   const tracer = addMesh(
     root,
     new BoxGeometry(0.0028, 0.0028, TRACER_UNIT),

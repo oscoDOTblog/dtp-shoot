@@ -63,6 +63,7 @@ export const Gun = createComponent('Gun', {
     label: 'Weapon',
   },
   automatic: { type: Types.Boolean, default: false, label: 'Full auto' },
+  twoHanded: { type: Types.Boolean, default: false, label: 'Two-hand control' },
   fireInterval: { type: Types.Float32, default: 0.16, min: 0.05, step: 0.01 },
   cooldown: { type: Types.Float32, default: 0 },
   flashTime: { type: Types.Float32, default: 0 },

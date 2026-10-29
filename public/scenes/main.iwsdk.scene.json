@@ -190,6 +190,7 @@
         "Gun": {
           "kind": "SMG",
           "automatic": true,
+          "twoHanded": true,
           "fireInterval": 0.085,
           "flashTime": 0,
           "tracerTime": 0,

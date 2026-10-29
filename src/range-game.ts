@@ -11,6 +11,7 @@ import {
   Grabbed,
   GrabSystem,
   InputComponent,
+  Matrix4,
   Mesh,
   Quaternion,
   Raycaster,
@@ -48,10 +49,14 @@ const MAG_RESPAWN_DELAY = 1.2;
 const MAG_INSERT_RADIUS = 0.18;
 /** Rearward travel of the free hand that counts as racking the slide. */
 const RACK_DISTANCE = 0.055;
+/** Shorter, more forgiving pull for the SMG charging handle. */
+const SMG_RACK_DISTANCE = 0.038;
 /** Slide travel per unit of hand pull, so the gesture reads at arm's length. */
 const SLIDE_PULL_RATIO = 0.55;
 /** Squeeze needed on the free hand before the slide can be racked. */
 const GRAB_THRESHOLD = 0.5;
+/** Generous support-hand capture radius around the SMG foregrip. */
+const SMG_SUPPORT_RADIUS = 0.28;
 /** How far below its bench pose an inactive weapon waits, out of grab range. */
 const PARKED_OFFSET = 5;
 /** Seconds an ejected magazine spends falling, settling, then disappearing. */
@@ -80,8 +85,10 @@ const HEIGHT_MAX = 0.5;
 
 type TargetRuntime = { arm: Object3D | null; head: Object3D | null };
 type GunRuntime = {
-  recoil: Object3D | null;
+  aimFrame: Object3D | null;
   gripPoint: Object3D | null;
+  supportPoint: Object3D | null;
+  supportLatched: boolean;
   slide: Object3D | null;
   muzzle: Object3D | null;
   flash: Object3D | null;
@@ -148,7 +155,17 @@ export class RangeGameSystem extends createSystem({
   private readonly handLocal = new Vector3();
   private readonly gunWorld = new Vector3();
   private readonly gripWorld = new Vector3();
+  private readonly supportWorld = new Vector3();
+  private readonly supportHandWorld = new Vector3();
   private readonly rootWorldTarget = new Vector3();
+  private readonly twoHandForward = new Vector3();
+  private readonly twoHandRight = new Vector3();
+  private readonly twoHandUp = new Vector3();
+  private readonly twoHandZ = new Vector3();
+  private readonly worldUp = new Vector3(0, 1, 0);
+  private readonly twoHandBasis = new Matrix4();
+  private readonly desiredQuaternion = new Quaternion();
+  private readonly xAxis = new Vector3(1, 0, 0);
   private readonly rackRuntime = new Map<number, RackRuntime>();
   private readonly candidates: Object3D[] = [];
   private readonly dropPosition = new Vector3();
@@ -542,7 +559,20 @@ export class RangeGameSystem extends createSystem({
     const aim = runtime.muzzle ?? gunObject;
     aim.getWorldPosition(this.shotOrigin);
     const hand = this.world.getSystem(GrabSystem)?.getHolderHand(gun) ?? null;
-    if (hand != null) {
+    const twoHandedAim =
+      hand != null &&
+      gun.getValue(Gun, 'twoHanded') === true &&
+      gun.getValue(Gun, 'kind') === WeaponKind.SMG &&
+      this.isSupportHandActive(hand, runtime);
+    if (twoHandedAim) {
+      // The two-hand solver has already produced the corrected aim quaternion.
+      // Compose it from the gun root and deliberately omit the transient
+      // Keep hitscan and tracer on the intended aim line.
+      gunObject.updateWorldMatrix(true, true);
+      aim.getWorldPosition(this.shotOrigin);
+      gunObject.getWorldQuaternion(this.gunQuaternion);
+      this.shotQuaternion.copy(this.gunQuaternion).multiply(runtime.correction);
+    } else if (hand != null) {
       const ray =
         hand === 'left' ? this.player.raySpaces.left : this.player.raySpaces.right;
       // Keep the physical shot at the snapped muzzle, but use the controller
@@ -784,9 +814,9 @@ export class RangeGameSystem extends createSystem({
     if (object == null || gunObject == null) {
       return;
     }
-    // The visible weapon is the recoil group, so place the magazine there.
+    // Place the magazine relative to the weapon's corrected aim frame.
     const runtime = this.gunState(gun, gunObject);
-    const frame = runtime.recoil ?? gunObject;
+    const frame = runtime.aimFrame ?? gunObject;
     frame.updateWorldMatrix(true, false);
     // `MagEject` is authored at the mouth of each weapon's magazine well.
     const eject = runtime.magEject;
@@ -900,9 +930,9 @@ export class RangeGameSystem extends createSystem({
     if (slide == null) {
       return;
     }
-    // The visible pistol is the recoil group corrected onto the hand ray, so
+    // The visible pistol is the aim frame corrected onto the hand ray, so
     // measure the free hand there rather than in the grabbed root's frame.
-    const frame = runtime.recoil ?? gunObject;
+    const frame = runtime.aimFrame ?? gunObject;
 
     let state = this.rackRuntime.get(gun.index);
     if (state == null) {
@@ -939,7 +969,10 @@ export class RangeGameSystem extends createSystem({
         this.handLocal.y < runtime.zoneMax.y &&
         this.handLocal.z > runtime.zoneMin.z &&
         this.handLocal.z < runtime.zoneMax.z;
-      if (inZone && squeezing) {
+      // Once the free hand has acquired the slide, keep tracking while the
+      // squeeze is held. Requiring zone overlap every frame made the SMG
+      // release the pull as soon as the hand moved toward the rear stop.
+      if ((inZone || state.tracking) && squeezing) {
         if (!state.tracking) {
           state.tracking = true;
           state.minZ = this.handLocal.z;
@@ -948,7 +981,11 @@ export class RangeGameSystem extends createSystem({
         // so entering the zone from the rear still allows a full pull.
         state.minZ = Math.min(state.minZ, this.handLocal.z);
         state.pull = Math.max(0, this.handLocal.z - state.minZ);
-        if (state.pull >= RACK_DISTANCE) {
+        const rackDistance =
+          gun.getValue(Gun, 'kind') === WeaponKind.SMG
+            ? SMG_RACK_DISTANCE
+            : RACK_DISTANCE;
+        if (state.pull >= rackDistance) {
           state.tracking = false;
           state.pull = 0;
           this.completeRack(game, gun);
@@ -964,12 +1001,18 @@ export class RangeGameSystem extends createSystem({
     }
 
     const locked = gun.getValue(Gun, 'needsRack') === true;
-    const pull = locked ? Math.min(state.pull, RACK_DISTANCE) : 0;
+    const rackDistance =
+      gun.getValue(Gun, 'kind') === WeaponKind.SMG
+        ? SMG_RACK_DISTANCE
+        : RACK_DISTANCE;
+    const pull = locked ? Math.min(state.pull, rackDistance) : 0;
     if (Math.abs((gun.getValue(Gun, 'rackPull') ?? 0) - pull) > 0.001) {
       gun.setValue(Gun, 'rackPull', pull);
     }
     const lockBack = gun.getValue(Gun, 'slideTravel') ?? 0.02;
-    const reach = locked ? lockBack + pull * SLIDE_PULL_RATIO : 0;
+    const reach = locked
+      ? lockBack + (pull / rackDistance) * lockBack * SLIDE_PULL_RATIO
+      : 0;
     slide.position.z += (reach - slide.position.z) * Math.min(1, delta * 20);
   }
 
@@ -1102,6 +1145,9 @@ export class RangeGameSystem extends createSystem({
     const label = this.weaponLabel(gun);
     gun.setValue(Gun, 'ammo', rounds);
     gun.setValue(Gun, 'magIn', true);
+    // Every fresh magazine requires a deliberate rack to chamber its first
+    // round, not only magazines inserted after an empty lock-back.
+    gun.setValue(Gun, 'needsRack', true);
     gun.setValue(
       Gun,
       'cooldown',
@@ -1333,8 +1379,7 @@ export class RangeGameSystem extends createSystem({
 
   /**
    * Draws the tracer on the shot ray itself, in the pistol's local space. It
-   * deliberately ignores the recoil pose so the line cannot flick upward after
-   * the shot.
+   * uses the same shot direction as hitscan so the line matches the barrel aim.
    */
   private placeTracer(gun: Entity, runtime: GunRuntime, distance: number): void {
     const gunObject = gun.object3D;
@@ -1472,12 +1517,17 @@ export class RangeGameSystem extends createSystem({
 
     if (hand != null) {
       this.alignGunToRay(hand, gunObject, runtime);
+      if (
+        gun.getValue(Gun, 'twoHanded') === true &&
+        gun.getValue(Gun, 'kind') === WeaponKind.SMG
+      ) {
+        this.alignTwoHandedSmg(hand, gunObject, runtime);
+      }
     }
 
-    // The recoil group carries only the ray correction now: no kick.
-    if (runtime.recoil != null) {
-      runtime.recoil.quaternion.copy(runtime.correction);
-      runtime.recoil.position.set(0, 0, 0);
+    if (runtime.aimFrame != null) {
+      runtime.aimFrame.quaternion.copy(runtime.correction);
+      runtime.aimFrame.position.set(0, 0, 0);
     }
 
     const flashTime = Math.max(0, (gun.getValue(Gun, 'flashTime') ?? 0) - delta);
@@ -1556,24 +1606,96 @@ export class RangeGameSystem extends createSystem({
     runtime.correction.copy(this.gunQuaternion).invert().multiply(this.rayQuaternion);
   }
 
+  /**
+   * Uses the free hand's squeeze position to capture the foregrip and its
+   * target ray to determine the SMG's forward aim.
+   * The primary hand remains the only GrabSystem owner; this support pose is
+   * deliberately custom so it cannot fight OneHandGrabbable.
+   */
+  private alignTwoHandedSmg(
+    holder: string,
+    gunObject: Object3D,
+    runtime: GunRuntime,
+  ): void {
+    if (!this.isSupportHandActive(holder, runtime)) {
+      return;
+    }
+    // Aim from the primary grip toward the support-hand squeeze location.
+    // Unlike a controller target ray, this preserves the physical two-hand
+    // relationship and lets moving the support hand steer the barrel.
+    const primaryGrip =
+      holder === 'left' ? this.player.gripSpaces.left : this.player.gripSpaces.right;
+    primaryGrip.getWorldPosition(this.handWorld);
+    this.twoHandForward.copy(this.supportHandWorld).sub(this.handWorld);
+    if (this.twoHandForward.lengthSq() < 0.0001) {
+      return;
+    }
+    this.twoHandForward.normalize();
+    this.twoHandZ.copy(this.twoHandForward).negate();
+    this.twoHandRight.crossVectors(this.twoHandForward, this.worldUp);
+    if (this.twoHandRight.lengthSq() < 0.0001) {
+      return;
+    }
+    this.twoHandRight.normalize();
+    this.twoHandUp.crossVectors(this.twoHandZ, this.twoHandRight).normalize();
+    this.twoHandBasis.makeBasis(
+      this.twoHandRight,
+      this.twoHandUp,
+      this.twoHandZ,
+    );
+    this.desiredQuaternion.setFromRotationMatrix(this.twoHandBasis);
+    gunObject.getWorldQuaternion(this.gunQuaternion);
+    runtime.correction
+      .copy(this.gunQuaternion)
+      .invert()
+      .multiply(this.desiredQuaternion);
+  }
+
+  private isSupportHandActive(holder: string, runtime: GunRuntime): boolean {
+    if (runtime.supportPoint == null) {
+      return false;
+    }
+    const freeHand = holder === 'left' ? 'right' : 'left';
+    const squeezing =
+      (this.input.xr.gamepads[freeHand]?.getButtonValue(InputComponent.Squeeze) ?? 0) >
+      GRAB_THRESHOLD;
+    const supportHand = this.player.gripSpaces[freeHand];
+    supportHand.getWorldPosition(this.supportHandWorld);
+    if (!squeezing) {
+      runtime.supportLatched = false;
+      return false;
+    }
+    if (runtime.supportLatched) {
+      return true;
+    }
+    runtime.supportPoint.getWorldPosition(this.supportWorld);
+    runtime.supportLatched =
+      this.supportHandWorld.distanceToSquared(this.supportWorld) <=
+      SMG_SUPPORT_RADIUS * SMG_SUPPORT_RADIUS;
+    return runtime.supportLatched;
+  }
+
   private resetGunPose(gun: Entity): void {
     const runtime = this.gunRuntime.get(gun.index);
     if (runtime == null) {
       return;
     }
     runtime.correction.identity();
-    if (runtime.recoil != null) {
-      runtime.recoil.quaternion.identity();
-      runtime.recoil.position.set(0, 0, 0);
+    if (runtime.aimFrame != null) {
+      runtime.aimFrame.quaternion.identity();
+      runtime.aimFrame.position.set(0, 0, 0);
     }
+    runtime.supportLatched = false;
   }
 
   private gunState(gun: Entity, gunObject: Object3D): GunRuntime {
     let runtime = this.gunRuntime.get(gun.index);
     if (runtime == null) {
       runtime = {
-        recoil: null,
+        aimFrame: null,
         gripPoint: null,
+        supportPoint: null,
+        supportLatched: false,
         slide: null,
         muzzle: null,
         flash: null,
@@ -1588,8 +1710,10 @@ export class RangeGameSystem extends createSystem({
       };
       this.gunRuntime.set(gun.index, runtime);
     }
-    runtime.recoil = runtime.recoil ?? gunObject.getObjectByName('Recoil') ?? null;
+    runtime.aimFrame = runtime.aimFrame ?? gunObject.getObjectByName('Recoil') ?? null;
     runtime.gripPoint = runtime.gripPoint ?? gunObject.getObjectByName('GripPoint') ?? null;
+    runtime.supportPoint =
+      runtime.supportPoint ?? gunObject.getObjectByName('SupportGrip') ?? null;
     runtime.slide = runtime.slide ?? gunObject.getObjectByName('Slide') ?? null;
     runtime.muzzle = runtime.muzzle ?? gunObject.getObjectByName('Muzzle') ?? null;
     runtime.flash = runtime.flash ?? gunObject.getObjectByName('MuzzleFlash') ?? null;

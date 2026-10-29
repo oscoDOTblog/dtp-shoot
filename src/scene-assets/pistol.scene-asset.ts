@@ -223,9 +223,9 @@ export function createPistol(): Object3D {
   const root = new Group();
   root.name = 'Pistol';
 
-  const recoil = new Group();
-  recoil.name = 'Recoil';
-  root.add(recoil);
+  const aimFrame = new Group();
+  aimFrame.name = 'Recoil';
+  root.add(aimFrame);
 
   const gripPoint = new Group();
   gripPoint.name = 'GripPoint';
@@ -234,7 +234,7 @@ export function createPistol(): Object3D {
 
   const slide = new Group();
   slide.name = 'Slide';
-  recoil.add(slide);
+  aimFrame.add(slide);
 
   // Slide: full-length top end, chamfered, with a rear cocking serration band.
   addBevelBox(
@@ -300,7 +300,7 @@ export function createPistol(): Object3D {
 
   const frame = new Group();
   frame.name = 'Frame';
-  recoil.add(frame);
+  aimFrame.add(frame);
 
   addBevelBox(
     frame,
@@ -332,8 +332,8 @@ export function createPistol(): Object3D {
     [0, MUZZLE_Y, -0.1512],
   ).name = 'Bore';
 
-  recoil.add(buildGrip(materials));
-  recoil.add(buildTriggerGuard(materials));
+  aimFrame.add(buildGrip(materials));
+  aimFrame.add(buildTriggerGuard(materials));
 
   // Control furniture.
   addBevelBox(
@@ -356,7 +356,7 @@ export function createPistol(): Object3D {
   const muzzle = new Group();
   muzzle.name = 'Muzzle';
   muzzle.position.set(0, MUZZLE_Y, MUZZLE_Z);
-  recoil.add(muzzle);
+  aimFrame.add(muzzle);
 
   // Reload markers. `MagWell` is where a seated magazine's origin belongs (the
   // insert test), `MagEject` is where an ejected magazine appears (the drop).
@@ -364,16 +364,16 @@ export function createPistol(): Object3D {
   const magWell = new Group();
   magWell.name = 'MagWell';
   magWell.position.set(0, -0.06, 0);
-  recoil.add(magWell);
+  aimFrame.add(magWell);
 
   const magEject = new Group();
   magEject.name = 'MagEject';
   magEject.position.set(0, -0.1, 0.006);
-  recoil.add(magEject);
+  aimFrame.add(magEject);
 
   // Invisible box the free hand must be inside to rack the slide.
   const rackZone = addMesh(
-    recoil,
+    aimFrame,
     new BoxGeometry(0.26, 0.15, 0.42),
     materials.marker,
     [0, 0.055, -0.01],
@@ -395,7 +395,7 @@ export function createPistol(): Object3D {
   flashCone.rotation.x = -Math.PI / 2;
   addMesh(flash, new SphereGeometry(0.017, 10, 8), materials.flash, [0, 0, 0]);
 
-  // The tracer hangs off the pistol root, not the recoil group: recoil rotates
+  // The tracer hangs off the pistol root, not the aim frame: the old kick effect rotated
   // the barrel for a few frames, and a line that inherits that kick visibly
   // flicks upward. The shooting system places it along the actual shot ray.
   const tracer = addMesh(
