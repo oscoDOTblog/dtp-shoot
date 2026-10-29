@@ -71,7 +71,8 @@ export const Gun = createComponent('Gun', {
   ammo: { type: Types.Int32, default: 8, min: 0, step: 1 },
   magazineSize: { type: Types.Int32, default: 8, min: 1, step: 1 },
   magIn: { type: Types.Boolean, default: true, label: 'Magazine seated' },
-  needsRack: { type: Types.Boolean, default: false, label: 'Slide locked back' },
+  needsRack: { type: Types.Boolean, default: false, label: 'Chambering required' },
+  slideLockedBack: { type: Types.Boolean, default: false, label: 'Slide physically locked back' },
   rackPull: { type: Types.Float32, default: 0, label: 'Slide pull (m)' },
   slideTravel: {
     type: Types.Float32,

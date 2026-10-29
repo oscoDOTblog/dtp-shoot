@@ -150,6 +150,7 @@
           "magazineSize": 8,
           "magIn": true,
           "needsRack": false,
+          "slideLockedBack": false,
           "rackPull": 0,
           "slideTravel": 0.02
         },
@@ -198,6 +199,7 @@
           "magazineSize": 30,
           "magIn": true,
           "needsRack": false,
+          "slideLockedBack": false,
           "rackPull": 0,
           "slideTravel": 0.045
         },

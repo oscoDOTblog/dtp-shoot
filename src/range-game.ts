@@ -146,6 +146,8 @@ export class RangeGameSystem extends createSystem({
   private readonly shotDirection = new Vector3();
   private readonly shotQuaternion = new Quaternion();
   private readonly gunQuaternion = new Quaternion();
+  private readonly magazineQuaternion = new Quaternion();
+  private readonly magazineParentQuaternion = new Quaternion();
   private readonly rayQuaternion = new Quaternion();
   private readonly tracerMid = new Vector3();
   private readonly tracerParentQuaternion = new Quaternion();
@@ -167,6 +169,7 @@ export class RangeGameSystem extends createSystem({
   private readonly desiredQuaternion = new Quaternion();
   private readonly xAxis = new Vector3(1, 0, 0);
   private readonly rackRuntime = new Map<number, RackRuntime>();
+  private readonly grabbedMagazines = new Set<number>();
   private readonly candidates: Object3D[] = [];
   private readonly dropPosition = new Vector3();
   private readonly dropQuaternion = new Quaternion();
@@ -625,6 +628,7 @@ export class RangeGameSystem extends createSystem({
         if (ammo <= 0) {
           // The last round leaves the slide locked back until it is racked.
           gun.setValue(Gun, 'needsRack', true);
+          gun.setValue(Gun, 'slideLockedBack', true);
           this.playEmpty();
         }
       }
@@ -930,10 +934,6 @@ export class RangeGameSystem extends createSystem({
     if (slide == null) {
       return;
     }
-    // The visible pistol is the aim frame corrected onto the hand ray, so
-    // measure the free hand there rather than in the grabbed root's frame.
-    const frame = runtime.aimFrame ?? gunObject;
-
     let state = this.rackRuntime.get(gun.index);
     if (state == null) {
       state = { tracking: false, minZ: 0, pull: 0 };
@@ -949,16 +949,26 @@ export class RangeGameSystem extends createSystem({
 
     if (rackable && holder != null) {
       const freeHand = holder === 'left' ? 'right' : 'left';
+      const holdingMagazine = this.isHandHoldingMagazine(freeHand);
       const hand = this.player.gripSpaces[freeHand];
       // Racking is a grab, not a brush: the free hand has to be squeezed.
       const squeezing =
         (this.input.xr.gamepads[freeHand]?.getButtonValue(
           InputComponent.Squeeze,
         ) ?? 0) > GRAB_THRESHOLD;
+      const squeezeStarted =
+        this.input.xr.gamepads[freeHand]?.getButtonDown(InputComponent.Squeeze) ===
+        true;
       gunObject.updateWorldMatrix(true, false);
-      frame.updateWorldMatrix(true, false);
+      runtime.rackZone?.updateWorldMatrix(true, false);
       hand.getWorldPosition(this.handWorld);
-      this.handLocal.copy(frame.worldToLocal(this.handWorld));
+      // Use the authored rack volume itself so slide interaction does not
+      // depend on the two-hand support correction.
+      if (runtime.rackZone != null) {
+        this.handLocal.copy(runtime.rackZone.worldToLocal(this.handWorld));
+      } else {
+        this.handLocal.copy(this.handWorld);
+      }
       // The rack zone is authored per weapon, so a short pistol slide and a
       // longer SMG bolt both accept a believable grab without hard-coded boxes.
       const inZone =
@@ -972,7 +982,9 @@ export class RangeGameSystem extends createSystem({
       // Once the free hand has acquired the slide, keep tracking while the
       // squeeze is held. Requiring zone overlap every frame made the SMG
       // release the pull as soon as the hand moved toward the rear stop.
-      if ((inZone || state.tracking) && squeezing) {
+      const acquired =
+        state.tracking || (inZone && squeezing && squeezeStarted && !holdingMagazine);
+      if (acquired && squeezing && !holdingMagazine) {
         if (!state.tracking) {
           state.tracking = true;
           state.minZ = this.handLocal.z;
@@ -1000,24 +1012,27 @@ export class RangeGameSystem extends createSystem({
       state.pull = 0;
     }
 
-    const locked = gun.getValue(Gun, 'needsRack') === true;
+    const needsRack = gun.getValue(Gun, 'needsRack') === true;
+    const slideLockedBack = gun.getValue(Gun, 'slideLockedBack') === true;
     const rackDistance =
       gun.getValue(Gun, 'kind') === WeaponKind.SMG
         ? SMG_RACK_DISTANCE
         : RACK_DISTANCE;
-    const pull = locked ? Math.min(state.pull, rackDistance) : 0;
+    const pull = needsRack ? Math.min(state.pull, rackDistance) : 0;
     if (Math.abs((gun.getValue(Gun, 'rackPull') ?? 0) - pull) > 0.001) {
       gun.setValue(Gun, 'rackPull', pull);
     }
     const lockBack = gun.getValue(Gun, 'slideTravel') ?? 0.02;
-    const reach = locked
-      ? lockBack + (pull / rackDistance) * lockBack * SLIDE_PULL_RATIO
+    const pullTravel = (pull / rackDistance) * lockBack * SLIDE_PULL_RATIO;
+    const reach = needsRack
+      ? (slideLockedBack ? lockBack : 0) + pullTravel
       : 0;
     slide.position.z += (reach - slide.position.z) * Math.min(1, delta * 20);
   }
 
   private completeRack(game: Entity, gun: Entity): void {
-    gun.setValue(Gun, 'needsRack', false);
+      gun.setValue(Gun, 'needsRack', false);
+    gun.setValue(Gun, 'slideLockedBack', false);
     this.playRack(game);
     const label = this.weaponLabel(gun);
     game.setValue(RangeGame, 'status', `${label} racked. Keep shooting`);
@@ -1057,10 +1072,21 @@ export class RangeGameSystem extends createSystem({
    */
   private updateReload(game: Entity, delta: number): void {
     const kind = this.activeKind(game);
+    const gun = this.activeGun(game);
     for (const magazine of this.queries.magazines.entities) {
       // The other weapon's magazines wait parked below the bench.
       if (magazine.getValue(Magazine, 'kind') !== kind) {
         continue;
+      }
+      const holder = this.world.getSystem(GrabSystem)?.getHolderHand(magazine);
+      if (holder == null) {
+        this.grabbedMagazines.delete(magazine.index);
+      } else if (
+        !this.grabbedMagazines.has(magazine.index) &&
+        magazine.getValue(Magazine, 'ready') !== false
+      ) {
+        this.grabbedMagazines.add(magazine.index);
+        this.snapMagazineOrientation(magazine, holder);
       }
       const state = this.magState(magazine);
       // Prove where a magazine belongs while it is still sitting untouched on
@@ -1084,7 +1110,6 @@ export class RangeGameSystem extends createSystem({
       }
     }
 
-    const gun = this.activeGun(game);
     if (gun == null) {
       return;
     }
@@ -1137,6 +1162,29 @@ export class RangeGameSystem extends createSystem({
       this.insertPoint.distanceToSquared(this.magPosition) <=
       MAG_INSERT_RADIUS * MAG_INSERT_RADIUS
     );
+  }
+
+  /** Snap a newly grabbed magazine upright to the grabbing hand's pose. */
+  private snapMagazineOrientation(
+    magazine: Entity,
+    holder: 'left' | 'right',
+  ): void {
+    const magazineObject = magazine.object3D;
+    if (magazineObject == null) {
+      return;
+    }
+    const hand = this.player.gripSpaces[holder];
+    hand.getWorldQuaternion(this.magazineQuaternion);
+    const parent = magazineObject.parent;
+    if (parent != null) {
+      parent.getWorldQuaternion(this.magazineParentQuaternion);
+      magazineObject.quaternion
+        .copy(this.magazineParentQuaternion)
+        .invert()
+        .multiply(this.magazineQuaternion);
+    } else {
+      magazineObject.quaternion.copy(this.magazineQuaternion);
+    }
   }
 
   private seatMagazine(game: Entity, gun: Entity, magazine: Entity): void {
@@ -1229,6 +1277,7 @@ export class RangeGameSystem extends createSystem({
       gun.setValue(Gun, 'ammo', gun.getValue(Gun, 'magazineSize') ?? 6);
       gun.setValue(Gun, 'magIn', true);
       gun.setValue(Gun, 'needsRack', false);
+      gun.setValue(Gun, 'slideLockedBack', false);
       gun.setValue(Gun, 'rackPull', 0);
       const runtime = this.rackRuntime.get(gun.index);
       if (runtime != null) {
@@ -1656,6 +1705,13 @@ export class RangeGameSystem extends createSystem({
       return false;
     }
     const freeHand = holder === 'left' ? 'right' : 'left';
+    // A magazine grab has priority over the SMG's custom support-hand pose.
+    // Otherwise bringing the magazine to the well can rotate the front rail
+    // toward the hand that is carrying it.
+    if (this.isHandHoldingMagazine(freeHand)) {
+      runtime.supportLatched = false;
+      return false;
+    }
     const squeezing =
       (this.input.xr.gamepads[freeHand]?.getButtonValue(InputComponent.Squeeze) ?? 0) >
       GRAB_THRESHOLD;
@@ -1668,11 +1724,29 @@ export class RangeGameSystem extends createSystem({
     if (runtime.supportLatched) {
       return true;
     }
+    const squeezeStarted =
+      this.input.xr.gamepads[freeHand]?.getButtonDown(InputComponent.Squeeze) === true;
+    if (!squeezeStarted) {
+      return false;
+    }
     runtime.supportPoint.getWorldPosition(this.supportWorld);
     runtime.supportLatched =
       this.supportHandWorld.distanceToSquared(this.supportWorld) <=
       SMG_SUPPORT_RADIUS * SMG_SUPPORT_RADIUS;
     return runtime.supportLatched;
+  }
+
+  private isHandHoldingMagazine(hand: 'left' | 'right'): boolean {
+    const grab = this.world.getSystem(GrabSystem);
+    if (grab == null) {
+      return false;
+    }
+    for (const magazine of this.queries.heldMagazines.entities) {
+      if (grab.getHolderHand(magazine) === hand) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private resetGunPose(gun: Entity): void {

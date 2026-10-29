@@ -564,7 +564,7 @@ export function createSmg(): Object3D {
     slide,
     new CylinderGeometry(0.0055, 0.0055, 0.032, 12),
     materials.steel,
-    [-0.038, 0.062, 0.062],
+    [-0.05, 0.08, 0.09],
   ).rotation.z = Math.PI / 2;
 
   addMesh(
