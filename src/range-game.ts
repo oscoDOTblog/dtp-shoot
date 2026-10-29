@@ -55,8 +55,8 @@ const SMG_RACK_DISTANCE = 0.038;
 const SLIDE_PULL_RATIO = 0.55;
 /** Squeeze needed on the free hand before the slide can be racked. */
 const GRAB_THRESHOLD = 0.5;
-/** Generous support-hand capture radius around the SMG foregrip. */
-const SMG_SUPPORT_RADIUS = 0.28;
+/** Focused support-hand capture radius around the SMG foregrip. */
+const SMG_SUPPORT_RADIUS = 0.12;
 /** How far below its bench pose an inactive weapon waits, out of grab range. */
 const PARKED_OFFSET = 5;
 /** Seconds an ejected magazine spends falling, settling, then disappearing. */
@@ -164,6 +164,7 @@ export class RangeGameSystem extends createSystem({
   private readonly twoHandRight = new Vector3();
   private readonly twoHandUp = new Vector3();
   private readonly twoHandZ = new Vector3();
+  private readonly twoHandGripOffset = new Vector3();
   private readonly worldUp = new Vector3(0, 1, 0);
   private readonly twoHandBasis = new Matrix4();
   private readonly desiredQuaternion = new Quaternion();
@@ -1669,9 +1670,10 @@ export class RangeGameSystem extends createSystem({
     if (!this.isSupportHandActive(holder, runtime)) {
       return;
     }
-    // Aim from the primary grip toward the support-hand squeeze location.
-    // Unlike a controller target ray, this preserves the physical two-hand
-    // relationship and lets moving the support hand steer the barrel.
+    // Solve the complete weapon pose from the two hand positions. The rear
+    // grip remains the primary anchor; rotating the weapon root (rather than
+    // only a child aim frame) keeps the front of the weapon attached to the
+    // same two-hand line.
     const primaryGrip =
       holder === 'left' ? this.player.gripSpaces.left : this.player.gripSpaces.right;
     primaryGrip.getWorldPosition(this.handWorld);
@@ -1693,11 +1695,33 @@ export class RangeGameSystem extends createSystem({
       this.twoHandZ,
     );
     this.desiredQuaternion.setFromRotationMatrix(this.twoHandBasis);
-    gunObject.getWorldQuaternion(this.gunQuaternion);
-    runtime.correction
-      .copy(this.gunQuaternion)
-      .invert()
-      .multiply(this.desiredQuaternion);
+    const gripPoint = runtime.gripPoint;
+    if (gripPoint != null) {
+      this.twoHandGripOffset
+        .copy(gripPoint.position)
+        .applyQuaternion(this.desiredQuaternion);
+      this.rootWorldTarget.copy(this.handWorld).sub(this.twoHandGripOffset);
+
+      if (gunObject.parent != null) {
+        gunObject.parent.getWorldQuaternion(this.rayQuaternion);
+        gunObject.quaternion
+          .copy(this.rayQuaternion)
+          .invert()
+          .multiply(this.desiredQuaternion);
+        gunObject.parent.worldToLocal(this.rootWorldTarget);
+        gunObject.position.copy(this.rootWorldTarget);
+      } else {
+        gunObject.quaternion.copy(this.desiredQuaternion);
+        gunObject.position.copy(this.rootWorldTarget);
+      }
+      runtime.correction.identity();
+    } else {
+      gunObject.getWorldQuaternion(this.gunQuaternion);
+      runtime.correction
+        .copy(this.gunQuaternion)
+        .invert()
+        .multiply(this.desiredQuaternion);
+    }
   }
 
   private isSupportHandActive(holder: string, runtime: GunRuntime): boolean {
