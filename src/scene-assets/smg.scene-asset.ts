@@ -246,6 +246,35 @@ export function createSmg(): Object3D {
     0.0012,
   ).name = 'LowerRailBase';
 
+  // Visible vertical foregrip for the support hand. The runtime SupportGrip
+  // anchor remains on the stable weapon root; this is visual geometry only.
+  const foregrip = new Group();
+  foregrip.name = 'VerticalForegrip';
+  handguard.add(foregrip);
+  addBevelBox(
+    foregrip,
+    [0.042, 0.13, 0.046],
+    [0, -0.057, -0.245],
+    materials.polymer,
+    0.004,
+  ).name = 'ForegripBody';
+  addBevelBox(
+    foregrip,
+    [0.048, 0.012, 0.054],
+    [0, 0.008, -0.245],
+    materials.gunmetal,
+    0.002,
+  ).name = 'ForegripCollar';
+  for (let i = 0; i < 4; i += 1) {
+    addBevelBox(
+      foregrip,
+      [0.044, 0.004, 0.05],
+      [0, -0.018 - i * 0.023, -0.245],
+      materials.gunmetal,
+      0.001,
+    ).name = 'ForegripRib';
+  }
+
   // --- barrel and muzzle device ---
   addMesh(
     body,
@@ -365,6 +394,16 @@ export function createSmg(): Object3D {
   );
   trigger.name = 'Trigger';
   trigger.rotation.x = 0.3;
+
+  // Lower receiver bridge closes the open gap between the trigger housing and
+  // the front of the rear grip without interfering with the trigger opening.
+  addBevelBox(
+    body,
+    [0.042, 0.034, 0.058],
+    [0, 0.004, 0.028],
+    materials.polymer,
+    0.004,
+  ).name = 'LowerReceiverBridge';
 
   // --- magazine well ---
   const magWell = new Group();
